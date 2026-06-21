@@ -1,0 +1,4 @@
+node_modules/
+.env
+data/wins.json
+npm-debug.log*
