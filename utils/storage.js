@@ -12,6 +12,8 @@ function loadData() {
   const raw = fs.readFileSync(DATA_PATH, 'utf-8');
   const data = JSON.parse(raw);
 
+  // Guard against an old-format file (pre-multi-board) or any corruption
+  // where "boards" is missing entirely.
   if (!data.boards || typeof data.boards !== 'object') {
     data.boards = {};
   }
@@ -23,6 +25,8 @@ function saveData(data) {
   fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
 }
 
+// Returns the board for a given key (e.g. "sotw", "botw"), creating it
+// with empty defaults the first time it's used.
 function getBoard(data, boardKey) {
   if (!data.boards[boardKey]) {
     data.boards[boardKey] = { users: {}, leaderboardMessage: null };

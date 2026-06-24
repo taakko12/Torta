@@ -4,6 +4,9 @@
   "description": "Discord bot that tracks clan event wins and auto-updates a live leaderboard embed",
   "main": "index.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node index.js",
     "deploy-commands": "node deploy-commands.js"

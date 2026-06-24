@@ -26,6 +26,22 @@ auto-updating embed for each one showing the top 3 members.
 | `/botw [@user]` | Everyone | Check your own or someone's BOTW win count |
 | `/botwleaderboard` | Manage Server permission | Posts the live BOTW leaderboard embed in the current channel |
 
+**Wise Old Man live stats** (pulled directly from wiseoldman.net, no manual entry needed)
+
+| Command | Who can use it | What it does |
+|---|---|---|
+| `/sotwstats` | Everyone | Shows the currently running Skill of the Week competition and its top 3 by XP gained |
+| `/botwstats` | Everyone | Shows the currently running Boss of the Week competition and its top 3 by KC gained |
+| `/ehpgained` | Everyone | Shows the clan's top 3 members by EHP (Efficient Hours Played) gained this week |
+| `/ehbgained` | Everyone | Shows the clan's top 3 members by EHB (Efficient Hours Bossed) gained this week |
+
+These four commands automatically detect your clan's currently active competitions
+on Wise Old Man — there's nothing to configure per-competition. The bot looks at
+your clan's competition schedule, finds whichever one is running right now, and
+figures out whether it's a skill or a boss competition based on its metric.
+This means `/sotwstats` and `/botwstats` will just work, week after week, as long
+as your clan keeps creating new competitions on WOM as usual.
+
 Each leaderboard tracks its own message independently — you can post SOTW in one
 channel and BOTW in a different channel (or the same one), and they'll each
 auto-update on their own.
@@ -63,6 +79,33 @@ Edit `.env` and fill in:
   enable Developer Mode in Discord Settings → Advanced first if you don't see this option).
   This makes commands appear instantly while testing. You can remove this line later
   for a global bot, but global command updates take up to an hour to propagate.
+
+## 2.5 Connect Wise Old Man (for /sotwstats, /botwstats, /ehpgained, /ehbgained)
+
+You need your clan's **Wise Old Man Group ID**:
+
+- Go to https://wiseoldman.net, search for your clan, open its group page
+- The URL will look like `https://wiseoldman.net/groups/12345` — `12345` is your Group ID
+
+Add it to `.env`:
+
+```
+WOM_GROUP_ID=12345
+```
+
+Two more optional `.env` values, both recommended but not required:
+- `WOM_USER_AGENT` — just your Discord username or clan name. WOM asks for this so
+  they can contact you if something's wrong with your usage, instead of just
+  IP-banning you.
+- `WOM_API_KEY` — message the [Wise Old Man Discord](https://wiseoldman.net/discord)
+  to request one; it raises your rate limit from 20 to 100 requests/minute.
+  The bot works fine without one for normal clan-sized usage.
+
+**Important:** these WOM commands work off your clan's **existing** competitions
+on Wise Old Man. If your clan doesn't create a competition there for a given week
+(or it's outside its start/end dates), `/sotwstats`/`/botwstats` will just say
+there's no active competition right now — there's nothing broken, it's just
+reflecting reality.
 
 ## 3. Install dependencies & deploy commands
 
@@ -131,12 +174,16 @@ clan-leaderboard-bot/
 ├── deploy-commands.js             # Registers slash commands with Discord
 ├── commands/
 │   ├── addsotw.js / removesotw.js / setsotw.js / sotw.js / sotwleaderboard.js
-│   └── addbotw.js / removebotw.js / setbotw.js / botw.js / botwleaderboard.js
+│   ├── addbotw.js / removebotw.js / setbotw.js / botw.js / botwleaderboard.js
+│   └── sotwstats.js / botwstats.js / ehpgained.js / ehbgained.js   (Wise Old Man)
 ├── utils/
 │   ├── storage.js                 # Reads/writes data/wins.json, supports multiple boards
 │   ├── boardCommandFactory.js     # Generates add/remove/set/check/leaderboard commands for any board
 │   ├── leaderboardEmbed.js        # Builds the top-3 embed for a given board
-│   └── updateLeaderboard.js       # Edits a board's live leaderboard message
+│   ├── updateLeaderboard.js       # Edits a board's live leaderboard message
+│   ├── womClient.js               # Tiny fetch wrapper for the WOM API, with caching
+│   ├── wom.js                     # Finds current SOTW/BOTW competitions, fetches gains
+│   └── womEmbeds.js               # Builds embeds for WOM competition/gained data
 └── data/
     └── wins.json                  # Created automatically on first run, holds all boards
 ```
