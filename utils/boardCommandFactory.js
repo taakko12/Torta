@@ -2,14 +2,6 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { loadData, saveData, getBoard } = require('./storage');
 const { refreshLeaderboardMessage } = require('./updateLeaderboard');
 
-// config = {
-//   boardKey:    'sotw'                      <- internal storage key
-//   label:       'Skill of the Week'         <- human-readable name used in messages
-//   commandName: 'addsotw'                   <- exact slash command name (no spaces)
-//   embedTitle:  '📈 Skill of the Week Leaderboard'
-//   color:       0x57f287
-// }
-
 function makeAddCommand(config) {
   return {
     data: new SlashCommandBuilder()
@@ -22,14 +14,15 @@ function makeAddCommand(config) {
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
+      const guildId = interaction.guildId;
       const user = interaction.options.getUser('user');
       const amount = interaction.options.getInteger('amount') ?? 1;
 
-      const data = loadData();
+      const data = loadData(guildId);
       const board = getBoard(data, config.boardKey);
       if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
       board.users[user.id].wins += amount;
-      saveData(data);
+      saveData(guildId, data);
 
       await refreshLeaderboardMessage(interaction.client, board, {
         title: config.embedTitle,
@@ -56,14 +49,15 @@ function makeRemoveCommand(config) {
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
+      const guildId = interaction.guildId;
       const user = interaction.options.getUser('user');
       const amount = interaction.options.getInteger('amount') ?? 1;
 
-      const data = loadData();
+      const data = loadData(guildId);
       const board = getBoard(data, config.boardKey);
       if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
       board.users[user.id].wins = Math.max(0, board.users[user.id].wins - amount);
-      saveData(data);
+      saveData(guildId, data);
 
       await refreshLeaderboardMessage(interaction.client, board, {
         title: config.embedTitle,
@@ -90,14 +84,15 @@ function makeSetCommand(config) {
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
+      const guildId = interaction.guildId;
       const user = interaction.options.getUser('user');
       const amount = interaction.options.getInteger('amount');
 
-      const data = loadData();
+      const data = loadData(guildId);
       const board = getBoard(data, config.boardKey);
       if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
       board.users[user.id].wins = amount;
-      saveData(data);
+      saveData(guildId, data);
 
       await refreshLeaderboardMessage(interaction.client, board, {
         title: config.embedTitle,
@@ -121,7 +116,7 @@ function makeCheckCommand(config) {
 
     async execute(interaction) {
       const user = interaction.options.getUser('user') ?? interaction.user;
-      const data = loadData();
+      const data = loadData(interaction.guildId);
       const board = getBoard(data, config.boardKey);
       const wins = board.users[user.id]?.wins ?? 0;
 
@@ -140,7 +135,8 @@ function makeLeaderboardCommand(config) {
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
-      const data = loadData();
+      const guildId = interaction.guildId;
+      const data = loadData(guildId);
       const board = getBoard(data, config.boardKey);
       const embed = buildEmbedFor(board, config);
       const message = await interaction.channel.send({ embeds: [embed] });
@@ -149,7 +145,7 @@ function makeLeaderboardCommand(config) {
         channelId: interaction.channel.id,
         messageId: message.id
       };
-      saveData(data);
+      saveData(guildId, data);
 
       await interaction.reply({
         content: `📌 ${config.label} leaderboard posted! It will auto-update whenever wins change.`,
@@ -159,7 +155,6 @@ function makeLeaderboardCommand(config) {
   };
 }
 
-// small internal helper so makeLeaderboardCommand doesn't need to require leaderboardEmbed.js directly
 function buildEmbedFor(board, config) {
   const { buildLeaderboardEmbed } = require('./leaderboardEmbed');
   return buildLeaderboardEmbed(board, { title: config.embedTitle, color: config.color });

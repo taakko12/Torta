@@ -1,28 +1,43 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { getGroupGained } = require('../utils/wom');
-const { buildGainedEmbed } = require('../utils/womEmbeds');
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { womGet } = require('../utils/womClient');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('ehpgained')
-    .setDescription('Show the top 3 clan members by EHP gained this week (from Wise Old Man)'),
+    .setDescription('Show EHP gained this month for an OSRS player')
+    .addStringOption(opt =>
+      opt.setName('username').setDescription('OSRS username').setRequired(true)
+    ),
 
   async execute(interaction) {
     await interaction.deferReply();
+    const username = interaction.options.getString('username');
 
+    let gained;
     try {
-      const entries = await getGroupGained('ehp', 'week', 3);
-      const embed = buildGainedEmbed({
-        title: '📈 Top EHP Gained This Week',
-        color: 0x57f287,
-        metric: 'ehp',
-        entries
-      });
-
-      await interaction.editReply({ embeds: [embed] });
+      gained = await womGet(`/players/${encodeURIComponent(username)}/gained?period=month`);
     } catch (err) {
-      console.error('ehpgained error:', err);
-      await interaction.editReply('❌ Could not fetch EHP gains from Wise Old Man. Try again in a bit.');
+      const msg = err.message?.toLowerCase() ?? '';
+      if (msg.includes('not found') || msg.includes('player_not_found')) {
+        return interaction.editReply({ content: `❌ Player **${username}** not found on Wise Old Man.` });
+      }
+      console.error(`[ehpgained] WOM fetch failed for "${username}": ${err.message}`);
+      return interaction.editReply({ content: '❌ Failed to fetch EHP data. Try again later.' });
     }
+
+    const ehp = gained?.data?.computed?.ehp?.value ?? null;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📈 EHP Gained — ${username}`)
+      .setColor(0x57f287)
+      .addFields({
+        name: 'EHP Gained (This Month)',
+        value: ehp != null ? `${Math.round(ehp).toLocaleString('en-US')} EHP` : 'N/A',
+        inline: true
+      })
+      .setFooter({ text: 'Powered by Wise Old Man' })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
   }
 };

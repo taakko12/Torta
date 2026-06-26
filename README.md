@@ -1,189 +1,215 @@
-# Clan Leaderboard Bot
+# Torta Clan Bot
 
-A Discord bot that tracks event wins for your clan across **multiple independent
-leaderboards** (e.g. Skill of the Week and Boss of the Week) and keeps a live,
-auto-updating embed for each one showing the top 3 members.
+A Discord bot for OSRS clans. Tracks SOTW/BOTW wins, loot drops, deaths, raid sign-ups, WOM standings, role management, and member onboarding — across multiple servers independently.
+
+---
 
 ## Commands
 
-**Skill of the Week (SOTW)**
+### Skill of the Week — `/sotw`
 
-| Command | Who can use it | What it does |
+| Subcommand | Who | What |
 |---|---|---|
-| `/addsotw @user [amount]` | Manage Server permission | Adds SOTW wins (default 1) to a member |
-| `/removesotw @user [amount]` | Manage Server permission | Removes SOTW wins (default 1) from a member |
-| `/setsotw @user amount` | Manage Server permission | Sets a member's SOTW win count directly |
-| `/sotw [@user]` | Everyone | Check your own or someone's SOTW win count |
-| `/sotwleaderboard` | Manage Server permission | Posts the live SOTW leaderboard embed in the current channel |
+| `/sotw check [@user]` | Everyone | Check your own or someone's SOTW win count |
+| `/sotw stats [username]` | Everyone | WOM SOTW standings (top 3 or specific player) |
+| `/sotw add @user [amount]` | Manage Server | Add SOTW wins |
+| `/sotw remove @user [amount]` | Manage Server | Remove SOTW wins |
+| `/sotw set @user amount` | Manage Server | Set SOTW wins directly |
+| `/sotw leaderboard` | Manage Server | Post the live SOTW wins leaderboard (auto-updates) |
 
-**Boss of the Week (BOTW)**
+### Boss of the Week — `/botw`
 
-| Command | Who can use it | What it does |
+| Subcommand | Who | What |
 |---|---|---|
-| `/addbotw @user [amount]` | Manage Server permission | Adds BOTW wins (default 1) to a member |
-| `/removebotw @user [amount]` | Manage Server permission | Removes BOTW wins (default 1) from a member |
-| `/setbotw @user amount` | Manage Server permission | Sets a member's BOTW win count directly |
-| `/botw [@user]` | Everyone | Check your own or someone's BOTW win count |
-| `/botwleaderboard` | Manage Server permission | Posts the live BOTW leaderboard embed in the current channel |
+| `/botw check [@user]` | Everyone | Check your own or someone's BOTW win count |
+| `/botw stats [username]` | Everyone | WOM BOTW standings (top 3 or specific player) |
+| `/botw add @user [amount]` | Manage Server | Add BOTW wins |
+| `/botw remove @user [amount]` | Manage Server | Remove BOTW wins |
+| `/botw set @user amount` | Manage Server | Set BOTW wins directly |
+| `/botw leaderboard` | Manage Server | Post the live BOTW wins leaderboard (auto-updates) |
 
-**Wise Old Man live stats** (pulled directly from wiseoldman.net, no manual entry needed)
+### Player Lookup — `/lookup`
 
-| Command | Who can use it | What it does |
+| Subcommand | Who | What |
 |---|---|---|
-| `/sotwstats` | Everyone | Shows the currently running Skill of the Week competition and its top 3 by XP gained |
-| `/botwstats` | Everyone | Shows the currently running Boss of the Week competition and its top 3 by KC gained |
-| `/ehpgained` | Everyone | Shows the clan's top 3 members by EHP (Efficient Hours Played) gained this week |
-| `/ehbgained` | Everyone | Shows the clan's top 3 members by EHB (Efficient Hours Bossed) gained this week |
+| `/lookup player username` | Everyone | WOM snapshot (total level, XP, EHP, EHB) |
+| `/lookup ehp username` | Everyone | Total EHP for a player |
+| `/lookup ehb username` | Everyone | Total EHB for a player |
 
-These four commands automatically detect your clan's currently active competitions
-on Wise Old Man — there's nothing to configure per-competition. The bot looks at
-your clan's competition schedule, finds whichever one is running right now, and
-figures out whether it's a skill or a boss competition based on its metric.
-This means `/sotwstats` and `/botwstats` will just work, week after week, as long
-as your clan keeps creating new competitions on WOM as usual.
+### Loot Tracking — `/lootboard` & `/loot`
 
-Each leaderboard tracks its own message independently — you can post SOTW in one
-channel and BOTW in a different channel (or the same one), and they'll each
-auto-update on their own.
+Tracks loot value from Dink webhooks automatically. Mobile players can submit manually via `/loot submit`.
 
-### Adding a third leaderboard later
+| Command | Who | What |
+|---|---|---|
+| `/lootboard show` | Everyone | Monthly loot leaderboard |
+| `/lootboard showall` | Everyone | All-time loot leaderboard |
+| `/lootboard setchannel #channel` | Manage Server | Set channel to watch for Dink loot notifications |
+| `/lootboard scrape` | Manage Server | Scrape full channel history to build all-time leaderboard |
+| `/lootboard reset` | Manage Server | Reset monthly totals (all-time unaffected) |
+| `/loot setchannel #channel` | Manage Server | Set channel where manual submissions are reviewed |
+| `/loot submit rsn value [item] [screenshot]` | Everyone | Submit a drop for mod approval |
 
-All the command logic lives in `utils/boardCommandFactory.js` as reusable factory
-functions. To add a new leaderboard (say, "Boss of the Month"), you'd just create
-5 new tiny command files following the pattern of the `sotw`/`botw` ones, each
-pointing at a new `boardKey` like `"botm"`. No changes needed to `index.js`,
-`storage.js`, or the embed logic.
+Manual `/loot submit` entries go to a review channel — a mod must approve before they count. Submitters cannot approve their own entries.
 
-## 1. Create the Discord Application & Bot
+### Death Tracking — `/plankboard`
 
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**.
-2. Name it (e.g. "Clan Leaderboard"), then go to the **Bot** tab.
-3. Click **Reset Token** to reveal your bot token — copy it, you'll need it shortly.
-4. Under **Privileged Gateway Intents**, you don't need to enable anything extra for this bot.
-5. Go to **OAuth2 → URL Generator**:
-   - Scopes: check `bot` and `applications.commands`
-   - Bot Permissions: check `Send Messages`, `Embed Links`, `Read Message History`, `View Channel`
-   - Copy the generated URL, open it in your browser, and invite the bot to your server.
-6. From **General Information**, copy the **Application ID** — this is your `CLIENT_ID`.
+Tracks deaths from Dink webhook messages. Resets monthly.
 
-## 2. Configure the project
+| Subcommand | Who | What |
+|---|---|---|
+| `/plankboard show` | Everyone | Monthly death leaderboard |
+| `/plankboard setchannel #channel` | Manage Server | Set channel to watch for Dink death notifications |
+| `/plankboard reset` | Manage Server | Reset monthly death counts |
+
+### Raids — `/raidschedule` & `/raidroster`
+
+| Command | Who | What |
+|---|---|---|
+| `/raidschedule name timestamp [description]` | Manage Server | Schedule a raid with sign-up buttons |
+| `/raidroster raidid` | Everyone | View the current roster for a raid |
+
+Raid posts have **Sign Up**, **Drop Out**, and **Mark Complete** buttons. Marking complete snapshots the attendee list. The bot sends reminders to signed-up members at 24h and 1h before the raid.
+
+### Events — `/events`
+
+Shows upcoming scheduled raids and active WOM SOTW/BOTW competitions in one embed.
+
+### Role Panel — `/rolepanel`
+
+| Subcommand | Who | What |
+|---|---|---|
+| `/rolepanel create` | Manage Server | Post the role selection panel |
+| `/rolepanel add role emoji [label]` | Manage Server | Add a role button to the panel |
+| `/rolepanel remove role` | Manage Server | Remove a role from the panel |
+| `/rolepanel list` | Manage Server | List all roles on the panel |
+
+Members click buttons to toggle roles. The panel auto-updates when roles are added/removed.
+
+### Welcome & TOS — `/welcome`
+
+| Subcommand | Who | What |
+|---|---|---|
+| `/welcome post` | Manage Server | Post the clan rules embed with an I Agree button |
+| `/welcome setrole @role` | Manage Server | Set the role granted on approval |
+| `/welcome setmodchannel #channel` | Manage Server | Set the channel where approval requests go |
+
+When a new member clicks **I Agree**, a request is posted to the mod channel with Approve/Reject buttons. Approving grants the configured role and DMs the member. The TOS embed is left untouched.
+
+**Tip — hide #welcome from members:** In Discord, go to the channel's Permission settings, add your Member role, and set **View Channel → Deny**. New members (no role) can see it; approved members can't.
+
+---
+
+## Setup
+
+### 1. Create the Discord Application
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**.
+2. Under the **Bot** tab, click **Reset Token** and copy your token.
+3. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
+4. Go to **OAuth2 → URL Generator**:
+   - Scopes: `bot`, `applications.commands`
+   - Bot Permissions: `Send Messages`, `Embed Links`, `Read Message History`, `View Channel`, `Manage Roles`, `Manage Messages`
+5. Open the generated URL and invite the bot to your server.
+6. From **General Information**, copy the **Application ID** (your `CLIENT_ID`).
+
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in:
-- `DISCORD_TOKEN` — from the Bot tab
-- `CLIENT_ID` — your Application ID
-- `GUILD_ID` — your Discord server's ID (right-click the server icon → Copy Server ID;
-  enable Developer Mode in Discord Settings → Advanced first if you don't see this option).
-  This makes commands appear instantly while testing. You can remove this line later
-  for a global bot, but global command updates take up to an hour to propagate.
-
-## 2.5 Connect Wise Old Man (for /sotwstats, /botwstats, /ehpgained, /ehbgained)
-
-You need your clan's **Wise Old Man Group ID**:
-
-- Go to https://wiseoldman.net, search for your clan, open its group page
-- The URL will look like `https://wiseoldman.net/groups/12345` — `12345` is your Group ID
-
-Add it to `.env`:
-
+Edit `.env`:
 ```
-WOM_GROUP_ID=12345
+DISCORD_TOKEN=your_bot_token
+CLIENT_ID=your_application_id
+GUILD_IDS=your_server_id,optional_second_server_id
+WOM_GROUP_ID=your_wom_group_id
 ```
 
-Two more optional `.env` values, both recommended but not required:
-- `WOM_USER_AGENT` — just your Discord username or clan name. WOM asks for this so
-  they can contact you if something's wrong with your usage, instead of just
-  IP-banning you.
-- `WOM_API_KEY` — message the [Wise Old Man Discord](https://wiseoldman.net/discord)
-  to request one; it raises your rate limit from 20 to 100 requests/minute.
-  The bot works fine without one for normal clan-sized usage.
+`GUILD_IDS` supports comma-separated IDs for instant multi-server deploy.
 
-**Important:** these WOM commands work off your clan's **existing** competitions
-on Wise Old Man. If your clan doesn't create a competition there for a given week
-(or it's outside its start/end dates), `/sotwstats`/`/botwstats` will just say
-there's no active competition right now — there's nothing broken, it's just
-reflecting reality.
-
-## 3. Install dependencies & deploy commands
+### 3. Install & deploy
 
 ```bash
 npm install
 npm run deploy-commands
-```
-
-You should see `✅ Guild commands deployed.` — refresh Discord and you'll see the
-slash commands available in your server.
-
-## 4. Run the bot
-
-```bash
 npm start
 ```
 
-You should see `✅ Logged in as YourBotName#0000` in the console.
-
-Then in Discord:
-- Go to your SOTW leaderboard channel and run `/sotwleaderboard` once.
-- Go to your BOTW leaderboard channel (can be the same channel or a different one) and run `/botwleaderboard` once.
-
-From then on, `/addsotw`/`/removesotw`/`/setsotw` will auto-update the SOTW message,
-and `/addbotw`/`/removebotw`/`/setbotw` will auto-update the BOTW message — independently.
-
-## Restricting commands further
-
-By default, `/addsotw`, `/removesotw`, `/setsotw`, `/sotwleaderboard` (and the
-matching `botw` versions) require the **Manage Server** permission. If you'd
-rather restrict them to a specific "Event Host" role instead:
-1. In Discord, go to **Server Settings → Integrations → [Your Bot]**.
-2. You can override per-command permissions there without touching any code —
-   assign specific roles or members to each command.
-
-## Deploying to a VPS / cloud host (Railway, Render, a droplet, etc.)
-
-This bot has no web server — it's a long-running process, so use a "worker" or
-"background service" deployment type if your host distinguishes between them.
-
-General steps for most hosts (Railway, Render, etc.):
-1. Push this project to a GitHub repo (the `.gitignore` already excludes `.env`
-   and `node_modules`).
-2. Create a new service on your host, pointing it at that repo.
-3. Set **Start Command** to `npm start` and **Build Command** to `npm install`.
-4. Add the same three environment variables (`DISCORD_TOKEN`, `CLIENT_ID`,
-   `GUILD_ID`) in the host's dashboard — never commit them to GitHub.
-5. **Important:** wins are stored in `data/wins.json` on local disk. Most cloud
-   hosts use **ephemeral filesystems**, meaning that file gets wiped on every
-   redeploy or restart. Check whether your host offers a **persistent
-   volume/disk** and mount it at the `data/` folder so your win counts survive
-   restarts. (Railway and Render both offer this as an add-on — look for
-   "Volumes" or "Persistent Disks" in their docs.) If you'd rather not deal
-   with volumes, let me know and I can switch this to SQLite or a small
-   hosted Postgres instance instead — those handle persistence automatically
-   on most platforms.
-6. Run `npm run deploy-commands` once (either locally with the same `.env`, or
-   as a one-off command on the host) any time you add/change a command.
-7. Deploy — the bot logs in and stays connected as long as the service is running.
-
-## Project structure
+### 4. First-run setup in Discord
 
 ```
-clan-leaderboard-bot/
-├── index.js                       # Bot entry point, loads commands & listens for interactions
-├── deploy-commands.js             # Registers slash commands with Discord
+/welcome setrole @Guest
+/welcome setmodchannel #mod-approvals
+/welcome post
+
+/rolepanel add role:@PvM emoji:⚔️
+/rolepanel create
+
+/lootboard setchannel #dink-loot
+/loot setchannel #loot-submissions
+/plankboard setchannel #dink-deaths
+
+/sotw leaderboard
+/botw leaderboard
+```
+
+Run `/lootboard scrape` once to back-fill the all-time leaderboard from existing channel history.
+
+---
+
+## Bot Role Hierarchy
+
+The bot's role in **Server Settings → Roles** must be positioned **above** any role it needs to assign (Member, Guest, etc.), otherwise role operations will fail with a permissions error.
+
+---
+
+## Persistent Storage
+
+All data is stored as JSON files under `data/{guildId}/`:
+
+| File | Contents |
+|---|---|
+| `wins.json` | SOTW/BOTW win counts and leaderboard message locations |
+| `drops.json` | Monthly + all-time loot totals, configured channel |
+| `planks.json` | Monthly death counts, configured channel |
+| `raids.json` | Scheduled raids, sign-ups, attendees |
+| `rolepanel.json` | Role panel config and role list |
+| `welcome.json` | TOS panel config, pending approvals |
+| `loot.json` | Pending manual loot submissions |
+
+**On cloud hosts (Railway, Render, etc.):** Mount a persistent volume at `data/` so data survives restarts. Most hosts offer this as an add-on ("Volumes" or "Persistent Disks").
+
+---
+
+## Project Structure
+
+```
+├── index.js                    # Bot entry point, interactions, Dink message parsing
+├── deploy-commands.js          # Registers slash commands with Discord
 ├── commands/
-│   ├── addsotw.js / removesotw.js / setsotw.js / sotw.js / sotwleaderboard.js
-│   ├── addbotw.js / removebotw.js / setbotw.js / botw.js / botwleaderboard.js
-│   └── sotwstats.js / botwstats.js / ehpgained.js / ehbgained.js   (Wise Old Man)
-├── utils/
-│   ├── storage.js                 # Reads/writes data/wins.json, supports multiple boards
-│   ├── boardCommandFactory.js     # Generates add/remove/set/check/leaderboard commands for any board
-│   ├── leaderboardEmbed.js        # Builds the top-3 embed for a given board
-│   ├── updateLeaderboard.js       # Edits a board's live leaderboard message
-│   ├── womClient.js               # Tiny fetch wrapper for the WOM API, with caching
-│   ├── wom.js                     # Finds current SOTW/BOTW competitions, fetches gains
-│   └── womEmbeds.js               # Builds embeds for WOM competition/gained data
-└── data/
-    └── wins.json                  # Created automatically on first run, holds all boards
+│   ├── sotw.js                 # SOTW wins + WOM standings
+│   ├── botw.js                 # BOTW wins + WOM standings
+│   ├── lookup.js               # Player lookup, EHP, EHB
+│   ├── lootboard.js            # Loot leaderboard (monthly + all-time + scrape)
+│   ├── loot.js                 # Manual loot submission with mod approval
+│   ├── plankboard.js           # Death leaderboard
+│   ├── raidschedule.js         # Schedule raids
+│   ├── raidroster.js           # View raid rosters
+│   ├── events.js               # Upcoming raids + WOM competitions
+│   ├── rolepanel.js            # Role selection panel
+│   └── welcome.js              # TOS panel + mod approval flow
+└── utils/
+    ├── storage.js              # SOTW/BOTW win storage (per guild)
+    ├── dropStorage.js          # Loot/drop storage (per guild)
+    ├── plankStorage.js         # Death storage (per guild)
+    ├── raidStorage.js          # Raid storage (per guild)
+    ├── rolePanelStorage.js     # Role panel storage (per guild)
+    ├── welcomeStorage.js       # Welcome/TOS + pending approvals (per guild)
+    ├── lootStorage.js          # Manual loot submission queue (per guild)
+    ├── raidEmbed.js            # Raid embed + button builder
+    ├── boardCommandFactory.js  # Factory for SOTW/BOTW command logic
+    ├── leaderboardEmbed.js     # Leaderboard embed builder
+    └── updateLeaderboard.js    # Auto-updates live leaderboard messages
 ```

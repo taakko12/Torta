@@ -1,32 +1,29 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_PATH = path.join(__dirname, '..', 'data', 'wins.json');
+function dataPath(guildId) {
+  return path.join(__dirname, '..', 'data', guildId, 'wins.json');
+}
 
-function loadData() {
-  if (!fs.existsSync(DATA_PATH)) {
+function loadData(guildId) {
+  const p = dataPath(guildId);
+  if (!fs.existsSync(p)) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
     const initial = { boards: {} };
-    fs.writeFileSync(DATA_PATH, JSON.stringify(initial, null, 2));
+    fs.writeFileSync(p, JSON.stringify(initial, null, 2));
     return initial;
   }
-  const raw = fs.readFileSync(DATA_PATH, 'utf-8');
-  const data = JSON.parse(raw);
-
-  // Guard against an old-format file (pre-multi-board) or any corruption
-  // where "boards" is missing entirely.
-  if (!data.boards || typeof data.boards !== 'object') {
-    data.boards = {};
-  }
-
+  const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  if (!data.boards || typeof data.boards !== 'object') data.boards = {};
   return data;
 }
 
-function saveData(data) {
-  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+function saveData(guildId, data) {
+  const p = dataPath(guildId);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(data, null, 2));
 }
 
-// Returns the board for a given key (e.g. "sotw", "botw"), creating it
-// with empty defaults the first time it's used.
 function getBoard(data, boardKey) {
   if (!data.boards[boardKey]) {
     data.boards[boardKey] = { users: {}, leaderboardMessage: null };

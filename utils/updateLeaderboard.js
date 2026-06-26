@@ -13,7 +13,8 @@ async function refreshLeaderboardMessage(client, board, embedOptions = {}) {
     const embed = buildLeaderboardEmbed(board, embedOptions);
     await message.edit({ embeds: [embed] });
   } catch (err) {
-    console.error('Failed to update leaderboard message:', err.message);
+    console.error(`[leaderboard] Failed to update message (channel: ${channelId}, msg: ${messageId}): ${err.message}`);
+    console.error('              The leaderboard message may have been deleted. Run /sotwleaderboard or /botwleaderboard again to repost it.');
   }
 }
 
