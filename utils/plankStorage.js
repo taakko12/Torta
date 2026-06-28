@@ -1,55 +1,115 @@
-const fs = require('fs');
-const path = require('path');
+const supabase = require('./supabase');
 
-const DEFAULT = { channelId: null, month: null, deaths: {} };
+// ── Channel config ───────────────────────────────────────────────────────────
 
-function dataPath(guildId) {
-  return path.join(__dirname, '..', 'data', guildId, 'planks.json');
+async function getPlanksChannelId(guildId) {
+  const { data } = await supabase
+    .from('guild_config')
+    .select('planks_channel_id')
+    .eq('guild_id', guildId)
+    .maybeSingle();
+  return data?.planks_channel_id ?? null;
 }
 
-function loadPlanks(guildId) {
-  const p = dataPath(guildId);
-  if (!fs.existsSync(p)) {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(DEFAULT, null, 2));
-    return { ...DEFAULT };
+async function setPlanksChannel(guildId, channelId) {
+  const { error } = await supabase
+    .from('guild_config')
+    .upsert({ guild_id: guildId, planks_channel_id: channelId }, { onConflict: 'guild_id' });
+  if (error) throw error;
+}
+
+// ── Write ────────────────────────────────────────────────────────────────────
+
+async function recordDeath(guildId, playerName, messageId = null, imageUrl = null) {
+  const { error } = await supabase.from('planks').insert({
+    guild_id: guildId,
+    player_name: playerName.toLowerCase(),
+    discord_message_id: messageId,
+    image_url: imageUrl,
+  });
+  if (error) {
+    if (error.code !== '23505') throw error;
+    // Backfill image_url if we now have one and it was missing
+    if (imageUrl && messageId != null) {
+      await supabase.from('planks')
+        .update({ image_url: imageUrl })
+        .eq('guild_id', guildId)
+        .eq('discord_message_id', messageId)
+        .is('image_url', null);
+    }
   }
-  return JSON.parse(fs.readFileSync(p, 'utf-8'));
 }
 
-function savePlanks(guildId, data) {
-  const p = dataPath(guildId);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(data, null, 2));
+// ── Read ─────────────────────────────────────────────────────────────────────
+
+async function getMonthlyLeaderboard(guildId) {
+  const { data, error } = await supabase.rpc('monthly_plank_leaderboard', { p_guild_id: guildId });
+  if (error) throw error;
+  return (data ?? []).map(r => ({ name: r.player_name, count: Number(r.count) }));
 }
+
+async function getAlltimeLeaderboard(guildId) {
+  const { data, error } = await supabase.rpc('alltime_plank_leaderboard', { p_guild_id: guildId });
+  if (error) throw error;
+  return (data ?? []).map(r => ({ name: r.player_name, count: Number(r.count) }));
+}
+
+async function getMostRecentPlank(guildId) {
+  const { data } = await supabase
+    .from('planks')
+    .select('player_name, image_url, recorded_at')
+    .eq('guild_id', guildId)
+    .order('recorded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ?? null;
+}
+
+// ── Admin ────────────────────────────────────────────────────────────────────
+
+async function renamePlayer(guildId, oldName, newName) {
+  const { count } = await supabase
+    .from('planks')
+    .select('*', { count: 'exact', head: true })
+    .eq('guild_id', guildId)
+    .ilike('player_name', oldName);
+  if (!count) return 0;
+
+  const { error } = await supabase
+    .from('planks')
+    .update({ player_name: newName.toLowerCase() })
+    .eq('guild_id', guildId)
+    .ilike('player_name', oldName);
+  if (error) throw error;
+  return count;
+}
+
+async function resetMonthlyPlanks(guildId) {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { error } = await supabase
+    .from('planks')
+    .delete()
+    .eq('guild_id', guildId)
+    .gte('recorded_at', monthStart);
+  if (error) throw error;
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
 
 function currentMonth() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function checkAndReset(data) {
-  const month = currentMonth();
-  if (data.month !== month) {
-    data.month = month;
-    data.deaths = {};
-    return true;
-  }
-  return false;
-}
-
-function recordDeath(guildId, data, playerName) {
-  checkAndReset(data);
-  const key = playerName.toLowerCase();
-  data.deaths[key] = (data.deaths[key] ?? 0) + 1;
-  savePlanks(guildId, data);
-}
-
-function getLeaderboard(data) {
-  checkAndReset(data);
-  return Object.entries(data.deaths)
-    .sort(([, a], [, b]) => b - a)
-    .map(([name, count]) => ({ name, count }));
-}
-
-module.exports = { loadPlanks, savePlanks, recordDeath, getLeaderboard, currentMonth, checkAndReset };
+module.exports = {
+  getPlanksChannelId,
+  setPlanksChannel,
+  recordDeath,
+  getMonthlyLeaderboard,
+  getAlltimeLeaderboard,
+  getMostRecentPlank,
+  renamePlayer,
+  resetMonthlyPlanks,
+  currentMonth,
+};
