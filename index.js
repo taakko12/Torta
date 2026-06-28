@@ -253,10 +253,6 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ This submission has already been resolved.', flags: 64 });
       }
 
-      if (action === 'loot_approve' && interaction.user.id === entry.userId) {
-        return interaction.reply({ content: '❌ You cannot approve your own submission.', flags: 64 });
-      }
-
       const oldEmbed = interaction.message.embeds[0];
       const newEmbed = EmbedBuilder.from(oldEmbed);
 
