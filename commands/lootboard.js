@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, AttachmentBuilde
 const {
   getDropsChannelId, setDropsChannel,
   getMonthlyLeaderboard, getAlltimeLeaderboard,
-  recordDrop, resetMonthlyDrops,
+  recordDrop, resetMonthlyDrops, getPlayerStats,
   parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem,
 } = require('../utils/dropStorage');
 const { currentMonth } = require('../utils/plankStorage');
@@ -70,6 +70,15 @@ module.exports = {
       .setDescription('Scrape full channel history and import all drops (deduplicates automatically)')
     )
     .addSubcommand(sub => sub
+      .setName('search')
+      .setDescription('Look up a player\'s top drops and total loot')
+      .addStringOption(opt => opt
+        .setName('rsn')
+        .setDescription('RuneScape name to look up')
+        .setRequired(true)
+      )
+    )
+    .addSubcommand(sub => sub
       .setName('reset')
       .setDescription('Manually reset the monthly loot leaderboard')
     ),
@@ -102,6 +111,31 @@ module.exports = {
           fmt('🏆 All Time', alltimeEntries)
         )
         .setTimestamp();
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (sub === 'search') {
+      const rsn = interaction.options.getString('rsn');
+      const stats = await getPlayerStats(guildId, rsn);
+
+      if (stats.dropCount === 0) {
+        return interaction.reply({ content: `❌ No drops found for **${rsn}**. Check the spelling or try a different name.`, flags: 64 });
+      }
+
+      const topLines = stats.topDrops.map((d, i) => {
+        const date = new Date(d.recorded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const item = d.item_name && d.item_name !== 'Monthly aggregate' ? d.item_name : 'Unknown item';
+        return `${MEDALS[i] ?? `${i + 1}.`} **${item}** — ${formatGp(d.gp_value)} *(${date})*`;
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🔍 ${stats.displayName}`)
+        .setColor(0xf1c40f)
+        .setDescription(
+          `**Total Loot:** ${formatGp(stats.totalGp)}\n**Drops Recorded:** ${stats.dropCount.toLocaleString()}\n\n▬▬▬▬▬▬▬▬▬\n🏆 Top Drops\n${topLines.join('\n')}`
+        )
+        .setTimestamp();
+
       return interaction.reply({ embeds: [embed] });
     }
 

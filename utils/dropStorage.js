@@ -74,6 +74,31 @@ async function getMostRecentDrop(guildId) {
   return data ?? null;
 }
 
+async function getPlayerStats(guildId, playerName) {
+  const [{ data: topDrops }, { data: allDrops }] = await Promise.all([
+    supabase
+      .from('drops')
+      .select('item_name, gp_value, recorded_at')
+      .eq('guild_id', guildId)
+      .ilike('player_name', playerName)
+      .order('gp_value', { ascending: false })
+      .limit(3),
+    supabase
+      .from('drops')
+      .select('gp_value, player_name')
+      .eq('guild_id', guildId)
+      .ilike('player_name', playerName),
+  ]);
+  const drops = allDrops ?? [];
+  return {
+    topDrops: topDrops ?? [],
+    totalGp: drops.reduce((sum, r) => sum + Number(r.gp_value), 0),
+    dropCount: drops.length,
+    // Use exact casing from DB for display
+    displayName: drops[0]?.player_name ?? playerName,
+  };
+}
+
 // ── Admin ────────────────────────────────────────────────────────────────────
 
 async function renamePlayer(guildId, oldName, newName) {
@@ -187,6 +212,7 @@ module.exports = {
   getMonthlyLeaderboard,
   getAlltimeLeaderboard,
   getMostRecentDrop,
+  getPlayerStats,
   renamePlayer,
   resetMonthlyDrops,
   parseGpString,
