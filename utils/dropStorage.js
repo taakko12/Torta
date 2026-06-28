@@ -99,6 +99,35 @@ async function getPlayerStats(guildId, playerName) {
   };
 }
 
+// ── Name changes ─────────────────────────────────────────────────────────────
+
+async function saveNameChange(guildId, oldName, newName) {
+  const { error } = await supabase.from('name_changes').upsert({
+    guild_id: guildId,
+    old_name: oldName.toLowerCase(),
+    new_name: newName.toLowerCase(),
+  }, { onConflict: 'guild_id,old_name' });
+  if (error) throw error;
+}
+
+async function getNameChangeMap(guildId) {
+  const { data } = await supabase
+    .from('name_changes')
+    .select('old_name, new_name')
+    .eq('guild_id', guildId);
+  return new Map((data ?? []).map(r => [r.old_name, r.new_name]));
+}
+
+function resolveNameFromMap(map, name) {
+  const seen = new Set();
+  let current = name.toLowerCase();
+  while (map.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = map.get(current);
+  }
+  return current;
+}
+
 // ── Admin ────────────────────────────────────────────────────────────────────
 
 async function renamePlayer(guildId, oldName, newName) {
@@ -213,6 +242,9 @@ module.exports = {
   getAlltimeLeaderboard,
   getMostRecentDrop,
   getPlayerStats,
+  saveNameChange,
+  getNameChangeMap,
+  resolveNameFromMap,
   renamePlayer,
   resetMonthlyDrops,
   parseGpString,

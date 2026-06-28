@@ -3,8 +3,10 @@ const {
   getDropsChannelId, setDropsChannel,
   getMonthlyLeaderboard, getAlltimeLeaderboard,
   recordDrop, resetMonthlyDrops, getPlayerStats,
+  getNameChangeMap, resolveNameFromMap,
   parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem,
 } = require('../utils/dropStorage');
+const { loadTrackscape } = require('../utils/trackscapeStorage');
 const { currentMonth } = require('../utils/plankStorage');
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -36,20 +38,59 @@ function isLootEmbed(embed) {
   return /loot|looted|received a drop|drop:/i.test(text);
 }
 
-async function fetchAllMessages(channel) {
+function dateToSnowflake(date) {
+  return ((BigInt(date.getTime()) - 1420070400000n) << 22n).toString();
+}
+
+async function fetchAllMessages(channel, afterSnowflake = null) {
   const all = [];
-  let lastId = null;
-  while (true) {
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
-    const batch = await channel.messages.fetch(options);
-    if (batch.size === 0) break;
-    const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-    all.push(...msgs);
-    lastId = batch.sort((a, b) => a.createdTimestamp - b.createdTimestamp).first().id;
-    if (batch.size < 100) break;
+  if (afterSnowflake) {
+    let lastId = afterSnowflake;
+    while (true) {
+      const batch = await channel.messages.fetch({ limit: 100, after: lastId });
+      if (batch.size === 0) break;
+      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+      all.push(...msgs);
+      lastId = msgs[msgs.length - 1].id;
+      if (batch.size < 100) break;
+    }
+  } else {
+    let lastId = null;
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+      const batch = await channel.messages.fetch(options);
+      if (batch.size === 0) break;
+      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+      all.push(...msgs);
+      lastId = batch.sort((a, b) => a.createdTimestamp - b.createdTimestamp).first().id;
+      if (batch.size < 100) break;
+    }
   }
   return all;
+}
+
+function parseBroadcastDropEmbed(embed) {
+  const title = embed.title ?? '';
+  const desc = embed.description ?? '';
+  const parseVal = s => s ? parseInt(s.replace(/[,\s]/g, ''), 10) || null : null;
+
+  if (title.includes('Raid Drop')) {
+    const m = desc.match(/^\*\*(.+?)\*\* received \*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
+    if (!m) return null;
+    return { player: m[1], item: m[2], value: parseVal(m[3]) };
+  }
+  if (title === '💰 Drop') {
+    const m = desc.match(/^\*\*(.+?)\*\* received a drop: (?:\d+x )?\*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
+    if (!m) return null;
+    return { player: m[1], item: m[2], value: parseVal(m[3]) };
+  }
+  if (title.includes('Clue Item')) {
+    const m = desc.match(/^\*\*(.+?)\*\* received a clue item: \*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
+    if (!m) return null;
+    return { player: m[1], item: m[2], value: parseVal(m[3]) };
+  }
+  return null;
 }
 
 module.exports = {
@@ -67,7 +108,17 @@ module.exports = {
     )
     .addSubcommand(sub => sub
       .setName('scrape')
-      .setDescription('Scrape full channel history and import all drops (deduplicates automatically)')
+      .setDescription('Scrape channel history and import drops (deduplicates automatically)')
+      .addStringOption(opt => opt
+        .setName('period')
+        .setDescription('How far back to scan (default: all time)')
+        .addChoices(
+          { name: 'Last 24 hours', value: '1d' },
+          { name: 'Last 7 days',   value: '7d' },
+          { name: 'Last 30 days',  value: '30d' },
+          { name: 'All time',      value: 'all' },
+        )
+      )
     )
     .addSubcommand(sub => sub
       .setName('search')
@@ -168,11 +219,25 @@ module.exports = {
         return interaction.editReply('❌ Loot channel not found. Run `/lootboard setchannel` again.');
       }
 
-      await interaction.editReply('⏳ Scraping channel history... this may take a while.');
+      const period = interaction.options.getString('period') ?? 'all';
+      let afterSnowflake = null;
+      if (period !== 'all') {
+        const days = parseInt(period);
+        afterSnowflake = dateToSnowflake(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
+      }
+      const periodLabel = period === 'all' ? 'all time' : `last ${period}`;
+
+      await interaction.editReply(`⏳ Scraping channel history (${periodLabel})... this may take a while.`);
+
+      const [nameMap, tsConfig] = await Promise.all([
+        getNameChangeMap(guildId),
+        loadTrackscape(guildId),
+      ]);
+      const resolve = name => resolveNameFromMap(nameMap, name);
 
       let messages;
       try {
-        messages = await fetchAllMessages(channel);
+        messages = await fetchAllMessages(channel, afterSnowflake);
       } catch (err) {
         console.error(`[lootboard scrape] Failed to fetch messages: ${err.message}`);
         return interaction.editReply('❌ Failed to fetch channel history.');
@@ -182,16 +247,17 @@ module.exports = {
       const dropRows = [];
       let counted = 0;
 
+      // Scan drops channel (Dink webhooks / bot loot embeds)
       for (const msg of messages) {
         if (!msg.webhookId && !msg.author?.bot) continue;
         let embedIdx = 0;
         for (const embed of (msg.embeds ?? [])) {
           if (isLootEmbed(embed)) {
-            const name = parseLootPlayer(embed, msg.content);
+            const rawName = parseLootPlayer(embed, msg.content);
             const gp = parseLootEmbed(embed);
-            if (name && gp > 0) {
-              const key = name.toLowerCase();
-              totals[key] = (totals[key] ?? 0) + gp;
+            if (rawName && gp > 0) {
+              const name = resolve(rawName);
+              totals[name] = (totals[name] ?? 0) + gp;
               dropRows.push({ ts: msg.createdAt, name, item: parseLootItem(embed), imageUrl: parseLootImage(embed), screenshotUrl: parseLootScreenshot(embed, msg), gp, messageId: msg.id, embedIdx });
               counted++;
             }
@@ -200,7 +266,32 @@ module.exports = {
         }
       }
 
-      // Insert into DB — dedup index silently skips any already-recorded messages
+      // Scan broadcast channel for TrackScape drop announcements
+      let broadcastScanned = 0;
+      let broadcastCounted = 0;
+      if (tsConfig.broadcastChannelId) {
+        const bChannel = await interaction.client.channels.fetch(tsConfig.broadcastChannelId).catch(() => null);
+        if (bChannel) {
+          let bMessages = [];
+          try { bMessages = await fetchAllMessages(bChannel, afterSnowflake); } catch {}
+          broadcastScanned = bMessages.length;
+          for (const msg of bMessages) {
+            if (!msg.author?.bot) continue;
+            for (let i = 0; i < (msg.embeds ?? []).length; i++) {
+              const parsed = parseBroadcastDropEmbed(msg.embeds[i]);
+              if (parsed && parsed.value > 0) {
+                const name = resolve(parsed.player);
+                totals[name] = (totals[name] ?? 0) + parsed.value;
+                dropRows.push({ ts: msg.createdAt, name, item: parsed.item, imageUrl: null, screenshotUrl: null, gp: parsed.value, messageId: msg.id, embedIdx: i });
+                counted++;
+                broadcastCounted++;
+              }
+            }
+          }
+        }
+      }
+
+      // Insert into DB — dedup index silently skips already-recorded messages
       for (const row of dropRows) {
         await recordDrop(guildId, row.name, row.gp, row.item, row.imageUrl, row.screenshotUrl, row.messageId, row.embedIdx);
       }
@@ -212,18 +303,20 @@ module.exports = {
       const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
 
       const lines = [
-        `Loot Scrape Log — ${new Date().toISOString()}`,
-        `Messages scanned : ${messages.length.toLocaleString()}`,
-        `Drops found      : ${counted.toLocaleString()}`,
-        `Players          : ${playerCount}`,
-        `Total value      : ${formatGp(total)}`,
+        `Loot Scrape Log — ${new Date().toISOString()} — period: ${periodLabel}`,
+        `Drops channel scanned    : ${messages.length.toLocaleString()} messages`,
+        `Broadcast channel scanned: ${broadcastScanned.toLocaleString()} messages (${broadcastCounted} drops)`,
+        `Drops found (total)      : ${counted.toLocaleString()}`,
+        `Players                  : ${playerCount}`,
+        `Total value              : ${formatGp(total)}`,
+        `Name changes applied     : ${nameMap.size}`,
         '',
         '=== ITEMIZED DROPS ===',
         'Timestamp'.padEnd(22) + 'Player'.padEnd(22) + 'Item'.padEnd(40) + 'Value',
         '-'.repeat(100),
         ...dropRows.map(r => {
           const ts = r.ts.toISOString().replace('T', ' ').slice(0, 16);
-          return ts.padEnd(22) + r.name.padEnd(22) + r.item.padEnd(40) + formatGp(r.gp);
+          return ts.padEnd(22) + r.name.padEnd(22) + (r.item ?? '').padEnd(40) + formatGp(r.gp);
         }),
         '',
         '=== PLAYER TOTALS ===',
@@ -233,10 +326,10 @@ module.exports = {
       ];
       const attachment = new AttachmentBuilder(Buffer.from(lines.join('\n'), 'utf8'), { name: 'scrape-log.txt' });
 
-      console.log(`[lootboard scrape] ${counted} drops, ${formatGp(total)} across ${playerCount} players in guild ${guildId}`);
+      console.log(`[lootboard scrape] ${counted} drops (${broadcastCounted} broadcast), ${formatGp(total)} across ${playerCount} players in guild ${guildId}`);
 
       return interaction.editReply({
-        content: `✅ Scrape complete — **${counted} drops**, **${formatGp(total)}**, **${playerCount} players** from ${messages.length.toLocaleString()} messages. All imported (duplicates skipped automatically).`,
+        content: `✅ Scrape complete (${periodLabel}) — **${counted} drops** (${broadcastCounted} from broadcasts), **${formatGp(total)}**, **${playerCount} players**. Duplicates skipped automatically.`,
         files: [attachment],
       });
     }

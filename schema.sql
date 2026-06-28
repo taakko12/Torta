@@ -18,6 +18,10 @@ ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS trackscape_code      text UNIQ
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS clanchat_channel_id  text;
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS broadcast_channel_id text;
 
+-- If name_changes doesn't exist yet, the CREATE TABLE IF NOT EXISTS above handles it.
+-- If you added it manually without changed_at, run:
+-- ALTER TABLE name_changes ADD COLUMN IF NOT EXISTS changed_at timestamptz DEFAULT now();
+
 -- Individual drop (loot) events — one row per embed processed
 CREATE TABLE IF NOT EXISTS drops (
   id                 uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -51,6 +55,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS planks_message_dedup
   WHERE discord_message_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS planks_guild_time ON planks (guild_id, recorded_at DESC);
+
+-- Name change history — maps old RSNs to current name for scrape integrity
+CREATE TABLE IF NOT EXISTS name_changes (
+  guild_id   text NOT NULL,
+  old_name   text NOT NULL,
+  new_name   text NOT NULL,
+  changed_at timestamptz DEFAULT now(),
+  PRIMARY KEY (guild_id, old_name)
+);
 
 -- =====================================================================
 -- Row Level Security
