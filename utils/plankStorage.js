@@ -21,6 +21,19 @@ async function setPlanksChannel(guildId, channelId) {
 // ── Write ────────────────────────────────────────────────────────────────────
 
 async function recordDeath(guildId, playerName, messageId = null, imageUrl = null) {
+  // Dedup across sources (Dink + TrackScape plugin): skip if this player
+  // already has a death recorded in the last 5 minutes for this guild.
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: recent } = await supabase
+    .from('planks')
+    .select('id')
+    .eq('guild_id', guildId)
+    .ilike('player_name', playerName)
+    .gte('recorded_at', since)
+    .limit(1)
+    .maybeSingle();
+  if (recent) return;
+
   const { error } = await supabase.from('planks').insert({
     guild_id: guildId,
     player_name: playerName.toLowerCase(),

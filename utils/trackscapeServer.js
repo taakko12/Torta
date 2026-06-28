@@ -5,6 +5,7 @@ const { EmbedBuilder } = require('discord.js');
 const { findGuildByCode } = require('./trackscapeStorage');
 const { extractBroadcast, stripTags } = require('./broadcastExtractor');
 const { recordDrop } = require('./dropStorage');
+const { recordDeath } = require('./plankStorage');
 
 // verificationCode → Set<WebSocket>
 const rooms = new Map();
@@ -132,6 +133,9 @@ function startTrackscapeServer(discordClient, port = 3000) {
             const sentMsg = await channel.send({ embeds: [embed] });
             if ((broadcast.type === 'RaidDrop' || broadcast.type === 'ItemDrop') && broadcast.value > 0) {
               await recordDrop(guild.guildId, broadcast.player, broadcast.value, broadcast.item, null, null, sentMsg.id, 0);
+            }
+            if (broadcast.type === 'PK' && !broadcast.won) {
+              await recordDeath(guild.guildId, broadcast.player, sentMsg.id, null);
             }
           }
         } catch (err) {
