@@ -85,41 +85,41 @@ CREATE POLICY "public read planks" ON planks FOR SELECT USING (true);
 
 CREATE OR REPLACE FUNCTION monthly_drop_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, total bigint) AS $$
-  SELECT player_name, SUM(gp_value)::bigint AS total
+  SELECT LOWER(player_name), SUM(gp_value)::bigint AS total
   FROM drops
   WHERE guild_id = p_guild_id
     AND date_trunc('month', recorded_at AT TIME ZONE 'UTC')
         = date_trunc('month', now() AT TIME ZONE 'UTC')
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY total DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION alltime_drop_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, total bigint) AS $$
-  SELECT player_name, SUM(gp_value)::bigint AS total
+  SELECT LOWER(player_name), SUM(gp_value)::bigint AS total
   FROM drops
   WHERE guild_id = p_guild_id
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY total DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION monthly_plank_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, count bigint) AS $$
-  SELECT player_name, COUNT(*)::bigint AS count
+  SELECT LOWER(player_name), COUNT(*)::bigint AS count
   FROM planks
   WHERE guild_id = p_guild_id
     AND date_trunc('month', recorded_at AT TIME ZONE 'UTC')
         = date_trunc('month', now() AT TIME ZONE 'UTC')
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY count DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION alltime_plank_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, count bigint) AS $$
-  SELECT player_name, COUNT(*)::bigint AS count
+  SELECT LOWER(player_name), COUNT(*)::bigint AS count
   FROM planks
   WHERE guild_id = p_guild_id
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY count DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 

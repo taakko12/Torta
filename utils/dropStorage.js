@@ -21,19 +21,24 @@ async function setDropsChannel(guildId, channelId) {
 // ── Write ────────────────────────────────────────────────────────────────────
 
 async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0) {
-  // Cross-source dedup (Dink vs TrackScape plugin): if the same player already
-  // has a drop of the same GP value in the last 5 minutes, it's a duplicate.
-  // Backfill any richer metadata (screenshot, item name) onto the existing row.
+  // Cross-source dedup (Dink vs TrackScape plugin): same player + same item
+  // within 5 minutes is a duplicate regardless of whether the GP value differs
+  // between sources. If item name isn't available from one source, fall back to
+  // matching on player + gp_value. Backfill richer metadata onto the first row.
   const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  const { data: recent } = await supabase
+  let dupQuery = supabase
     .from('drops')
     .select('id, image_url, screenshot_url, item_name')
     .eq('guild_id', guildId)
     .ilike('player_name', playerName)
-    .eq('gp_value', gpValue)
     .gte('recorded_at', since)
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  if (itemName) {
+    dupQuery = dupQuery.ilike('item_name', itemName);
+  } else {
+    dupQuery = dupQuery.eq('gp_value', gpValue);
+  }
+  const { data: recent } = await dupQuery.maybeSingle();
 
   if (recent) {
     const patch = {};
