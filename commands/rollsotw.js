@@ -60,7 +60,11 @@ function formatCt(date) {
 async function createWomCompetition(metric, startsAt, endsAt, title) {
   const groupId = process.env.WOM_GROUP_ID;
   const verificationCode = process.env.WOM_GROUP_VERIFICATION_CODE;
-  if (!groupId || !verificationCode) return null;
+  if (!groupId || !verificationCode) {
+    console.error(`[rollsotw] Missing env vars — WOM_GROUP_ID: ${groupId ? 'set' : 'MISSING'}, WOM_GROUP_VERIFICATION_CODE: ${verificationCode ? 'set' : 'MISSING'}`);
+    return null;
+  }
+  console.log(`[rollsotw] Creating WOM competition: metric=${metric} groupId=${groupId} starts=${startsAt.toISOString()}`);
   try {
     const body = { title, metric, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), groupId: parseInt(groupId), groupVerificationCode: verificationCode };
     const res = await fetch('https://api.wiseoldman.net/v2/competitions', {
