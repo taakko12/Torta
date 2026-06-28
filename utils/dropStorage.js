@@ -27,7 +27,7 @@ async function setDropsChannel(guildId, channelId) {
 
 // ── Write ────────────────────────────────────────────────────────────────────
 
-async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0) {
+async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0, timestamp = null) {
   const name = normalizeName(playerName);
 
   // Cross-source dedup (Dink vs TrackScape plugin): look for a recent drop
@@ -64,7 +64,7 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
     return;
   }
 
-  const { error } = await supabase.from('drops').insert({
+  const insertData = {
     guild_id: guildId,
     player_name: name,
     gp_value: gpValue,
@@ -73,7 +73,10 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
     screenshot_url: screenshotUrl,
     discord_message_id: messageId,
     embed_index: embedIndex ?? 0,
-  });
+  };
+  if (timestamp) insertData.recorded_at = timestamp instanceof Date ? timestamp.toISOString() : timestamp;
+
+  const { error } = await supabase.from('drops').insert(insertData);
   if (error) {
     if (error.code !== '23505') throw error;
     if (messageId != null) {
@@ -81,10 +84,10 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
       if (imageUrl) patch.image_url = imageUrl;
       if (screenshotUrl) patch.screenshot_url = screenshotUrl;
       if (itemName) patch.item_name = itemName;
-      // Also correct gp_value — handles the case where a previous scrape stored an
-      // aggregated total (e.g. 67M for a multi-item embed) and re-scrape now has
-      // the correct per-item value (e.g. 1.4M for Sunfire splinters).
+      // Correct gp_value — handles re-scraping an old aggregate row with the real per-item value.
       if (gpValue) patch.gp_value = gpValue;
+      // Correct recorded_at when we now know the real message timestamp.
+      if (timestamp) patch.recorded_at = timestamp instanceof Date ? timestamp.toISOString() : timestamp;
       if (Object.keys(patch).length > 0) {
         await supabase.from('drops')
           .update(patch)

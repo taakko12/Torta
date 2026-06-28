@@ -321,7 +321,7 @@ module.exports = {
 
       // Insert into DB — dedup index silently skips already-recorded messages
       for (const row of dropRows) {
-        await recordDrop(guildId, row.name, row.gp, row.item, row.imageUrl, row.screenshotUrl, row.messageId, row.embedIdx);
+        await recordDrop(guildId, row.name, row.gp, row.item, row.imageUrl, row.screenshotUrl, row.messageId, row.embedIdx, row.ts);
       }
 
       const total = Object.values(totals).reduce((a, b) => a + b, 0);
