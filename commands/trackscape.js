@@ -44,8 +44,9 @@ module.exports = {
 
       await saveTrackscape(guildId, config);
 
-      // TRACKSCAPE_PUBLIC_URL = full https URL (e.g. Railway). Falls back to raw host:port for local.
-      const base = (process.env.TRACKSCAPE_PUBLIC_URL || '').replace(/\/$/, '');
+      // TRACKSCAPE_PUBLIC_URL = Railway domain, with or without https:// prefix
+      let base = (process.env.TRACKSCAPE_PUBLIC_URL || '').replace(/\/$/, '');
+      if (base && !/^https?:\/\//i.test(base)) base = `https://${base}`;
       const httpUrl = base
         ? `${base}/api/chat/new-clan-chat`
         : `http://${process.env.TRACKSCAPE_HOST || `your-server-ip:${process.env.TRACKSCAPE_PORT || 3000}`}/api/chat/new-clan-chat`;
