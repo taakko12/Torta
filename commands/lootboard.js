@@ -269,22 +269,34 @@ module.exports = {
       // Scan broadcast channel for TrackScape drop announcements
       let broadcastScanned = 0;
       let broadcastCounted = 0;
+      let broadcastNoValue = 0;
+      let broadcastStatus = 'not configured';
       if (tsConfig.broadcastChannelId) {
         const bChannel = await interaction.client.channels.fetch(tsConfig.broadcastChannelId).catch(() => null);
-        if (bChannel) {
+        if (!bChannel) {
+          broadcastStatus = `channel ${tsConfig.broadcastChannelId} not found or no access`;
+        } else {
           let bMessages = [];
-          try { bMessages = await fetchAllMessages(bChannel, afterSnowflake); } catch {}
+          try {
+            bMessages = await fetchAllMessages(bChannel, afterSnowflake);
+            broadcastStatus = 'ok';
+          } catch (err) {
+            broadcastStatus = `fetch failed: ${err.message}`;
+          }
           broadcastScanned = bMessages.length;
           for (const msg of bMessages) {
             if (!msg.author?.bot) continue;
             for (let i = 0; i < (msg.embeds ?? []).length; i++) {
               const parsed = parseBroadcastDropEmbed(msg.embeds[i]);
-              if (parsed && parsed.value > 0) {
+              if (!parsed) continue;
+              if (parsed.value > 0) {
                 const name = resolve(parsed.player);
                 totals[name] = (totals[name] ?? 0) + parsed.value;
                 dropRows.push({ ts: msg.createdAt, name, item: parsed.item, imageUrl: null, screenshotUrl: null, gp: parsed.value, messageId: msg.id, embedIdx: i });
                 counted++;
                 broadcastCounted++;
+              } else {
+                broadcastNoValue++;
               }
             }
           }
@@ -305,7 +317,10 @@ module.exports = {
       const lines = [
         `Loot Scrape Log — ${new Date().toISOString()} — period: ${periodLabel}`,
         `Drops channel scanned    : ${messages.length.toLocaleString()} messages`,
-        `Broadcast channel scanned: ${broadcastScanned.toLocaleString()} messages (${broadcastCounted} drops)`,
+        `Broadcast channel status : ${broadcastStatus}`,
+        `Broadcast channel scanned: ${broadcastScanned.toLocaleString()} messages`,
+        `  → recorded             : ${broadcastCounted} drops`,
+        `  → skipped (no value)   : ${broadcastNoValue} embeds (posted before coin value was added to embed)`,
         `Drops found (total)      : ${counted.toLocaleString()}`,
         `Players                  : ${playerCount}`,
         `Total value              : ${formatGp(total)}`,
