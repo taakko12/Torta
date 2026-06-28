@@ -57,14 +57,19 @@ async function getCurrentSkillCompetition() {
   return candidates[0] ?? null;
 }
 
-// Same idea, but for Boss metrics.
-async function getCurrentBossCompetition() {
+// Returns all ongoing boss competitions (usually 1, but 2 for a paired boss week).
+async function getCurrentBossCompetitions() {
   const competitions = await getGroupCompetitions();
-  const candidates = competitions
+  return competitions
     .filter(isOngoing)
     .filter(c => BOSS_METRICS.has(c.metric))
     .sort((a, b) => new Date(b.startsAt) - new Date(a.startsAt));
-  return candidates[0] ?? null;
+}
+
+// Convenience single-comp accessor (backwards compat).
+async function getCurrentBossCompetition() {
+  const comps = await getCurrentBossCompetitions();
+  return comps[0] ?? null;
 }
 
 // Fetches full standings for a competition (XP/KC gained per participant).
@@ -85,6 +90,7 @@ module.exports = {
   getGroupCompetitions,
   getCurrentSkillCompetition,
   getCurrentBossCompetition,
+  getCurrentBossCompetitions,
   getCompetitionStandings,
   getGroupGained
 };

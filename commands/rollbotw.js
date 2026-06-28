@@ -201,14 +201,30 @@ module.exports = {
           )
           .setTimestamp();
 
+        const pair = BOSS_PAIRS[rolled];
+        const bossLabel = pair ? `${DISPLAY[rolled] ?? rolled} + ${DISPLAY[pair] ?? pair}` : (DISPLAY[rolled] ?? rolled);
         const title = `Boss of the Week — ${DISPLAY[rolled] ?? rolled}`;
-        const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
-        if (comp?.id) {
-          finalEmbed.addFields({ name: '🏆 WOM Competition', value: `[${title}](https://wiseoldman.net/competitions/${comp.id})` });
+        const pairTitle = pair ? `Boss of the Week — ${DISPLAY[pair] ?? pair}` : null;
+
+        const [comp, pairComp] = await Promise.all([
+          createWomCompetition(rolled, startsAt, endsAt, title),
+          pair ? createWomCompetition(pair, startsAt, endsAt, pairTitle) : Promise.resolve(null),
+        ]);
+
+        if (comp?.id || pairComp?.id) {
+          const links = [
+            comp?.id ? `[${DISPLAY[rolled] ?? rolled}](https://wiseoldman.net/competitions/${comp.id})` : null,
+            pairComp?.id ? `[${DISPLAY[pair] ?? pair}](https://wiseoldman.net/competitions/${pairComp.id})` : null,
+          ].filter(Boolean).join(' + ');
+          finalEmbed.addFields({ name: '🏆 WOM Competitions', value: links });
         } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
           finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
         } else {
           finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
+        }
+
+        if (pair) {
+          finalEmbed.setDescription(`## ${bossLabel}`);
         }
 
         await i.update({ embeds: [finalEmbed], components: [] });
