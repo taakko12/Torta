@@ -125,7 +125,8 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
       console.error(`[rollbotw] WOM API ${res.status}: ${err}`);
       return null;
     }
-    return await res.json();
+    const json = await res.json();
+    return json?.competition ?? json;
   } catch (e) {
     console.error(`[rollbotw] WOM API fetch error: ${e.message}`);
     return null;
