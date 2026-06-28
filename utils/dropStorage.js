@@ -1,5 +1,12 @@
 const supabase = require('./supabase');
 
+// Normalizes a player name to a consistent, comparable form.
+// Collapses all Unicode whitespace variants (non-breaking space, thin space,
+// etc.) to a regular space, then trims and lowercases.
+function normalizeName(name) {
+  return name.replace(/\s+/gu, ' ').trim().toLowerCase();
+}
+
 // ── Channel config ───────────────────────────────────────────────────────────
 
 async function getDropsChannelId(guildId) {
@@ -21,6 +28,8 @@ async function setDropsChannel(guildId, channelId) {
 // ── Write ────────────────────────────────────────────────────────────────────
 
 async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0) {
+  const name = normalizeName(playerName);
+
   // Cross-source dedup (Dink vs TrackScape plugin): same player + same item
   // within 5 minutes is a duplicate regardless of whether the GP value differs
   // between sources. If item name isn't available from one source, fall back to
@@ -30,7 +39,7 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
     .from('drops')
     .select('id, image_url, screenshot_url, item_name')
     .eq('guild_id', guildId)
-    .ilike('player_name', playerName)
+    .eq('player_name', name)
     .gte('recorded_at', since)
     .limit(1);
   if (itemName) {
@@ -53,7 +62,7 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
 
   const { error } = await supabase.from('drops').insert({
     guild_id: guildId,
-    player_name: playerName.toLowerCase(),
+    player_name: name,
     gp_value: gpValue,
     item_name: itemName,
     image_url: imageUrl,
