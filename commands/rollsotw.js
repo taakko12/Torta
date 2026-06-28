@@ -62,14 +62,20 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   const verificationCode = process.env.WOM_GROUP_VERIFICATION_CODE;
   if (!groupId || !verificationCode) return null;
   try {
+    const body = { title, metric, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), groupId: parseInt(groupId), groupVerificationCode: verificationCode };
     const res = await fetch('https://api.wiseoldman.net/v2/competitions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'torta-clan-bot' },
-      body: JSON.stringify({ title, metric, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), groupId: parseInt(groupId), groupVerificationCode: verificationCode }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`[rollsotw] WOM API ${res.status}: ${err}`);
+      return null;
+    }
     return await res.json();
-  } catch {
+  } catch (e) {
+    console.error(`[rollsotw] WOM API fetch error: ${e.message}`);
     return null;
   }
 }
