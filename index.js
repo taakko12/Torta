@@ -8,7 +8,8 @@ const { loadPanel } = require('./utils/rolePanelStorage');
 const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
 const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
 const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./utils/welcomeStorage');
-const { startTrackscapeServer } = require('./utils/trackscapeServer');
+const { startTrackscapeServer, sendToGame } = require('./utils/trackscapeServer');
+const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 
 const DEATH_QUIPS = [
@@ -326,10 +327,20 @@ client.on('interactionCreate', async interaction => {
 
 // Watch configured channels for Dink death and loot webhook messages
 client.on('messageCreate', async message => {
-  if (!message.webhookId) return;
   if (!message.guildId) return;
 
   const guildId = message.guildId;
+
+  // Relay regular Discord messages to in-game clan chat via TrackScape WebSocket
+  if (!message.webhookId && !message.author?.bot && message.content) {
+    const tsConfig = await loadTrackscape(guildId);
+    if (tsConfig.clanChatChannelId && message.channelId === tsConfig.clanChatChannelId && tsConfig.verificationCode) {
+      const displayName = message.member?.displayName ?? message.author.username;
+      sendToGame(tsConfig.verificationCode, displayName, message.content);
+    }
+  }
+
+  if (!message.webhookId) return;
 
   const [planksChannelId, dropsChannelId] = await Promise.all([
     getPlanksChannelId(guildId),
