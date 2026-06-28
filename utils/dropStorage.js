@@ -243,7 +243,7 @@ function parseLootItem(embed) {
 
   // Best source: "N x Item Name (value)" line in description (Loot Watch / Dink format)
   const itemMatch = desc.match(/\d+\s*x\s+(.+?)\s*\(/);
-  if (itemMatch) return itemMatch[1].trim();
+  if (itemMatch) return itemMatch[1].trim().replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
 
   // Fallback: title, but skip generic titles like "Loot Drop"
   const title = embed.title ?? '';
@@ -271,7 +271,9 @@ function parseLootItems(embed) {
     const m = line.trim().match(/^(\d+)\s*x\s+(.+)\s+\(([\d.,]+[KMBkmb]?)\)$/);
     if (!m) continue;
     const value = parseGpString(m[3]);
-    if (value != null && value > 0) items.push({ item: m[2].trim(), gpValue: value });
+    // Dink hyperlinks item names: [Item Name](url) → strip to plain text
+    const itemText = m[2].trim().replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    if (value != null && value > 0) items.push({ item: itemText, gpValue: value });
   }
 
   if (items.length > 0) return items;
