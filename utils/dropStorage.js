@@ -21,6 +21,31 @@ async function setDropsChannel(guildId, channelId) {
 // ── Write ────────────────────────────────────────────────────────────────────
 
 async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0) {
+  // Cross-source dedup (Dink vs TrackScape plugin): if the same player already
+  // has a drop of the same GP value in the last 5 minutes, it's a duplicate.
+  // Backfill any richer metadata (screenshot, item name) onto the existing row.
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: recent } = await supabase
+    .from('drops')
+    .select('id, image_url, screenshot_url, item_name')
+    .eq('guild_id', guildId)
+    .ilike('player_name', playerName)
+    .eq('gp_value', gpValue)
+    .gte('recorded_at', since)
+    .limit(1)
+    .maybeSingle();
+
+  if (recent) {
+    const patch = {};
+    if (imageUrl && !recent.image_url) patch.image_url = imageUrl;
+    if (screenshotUrl && !recent.screenshot_url) patch.screenshot_url = screenshotUrl;
+    if (itemName && !recent.item_name) patch.item_name = itemName;
+    if (Object.keys(patch).length > 0) {
+      await supabase.from('drops').update(patch).eq('id', recent.id);
+    }
+    return;
+  }
+
   const { error } = await supabase.from('drops').insert({
     guild_id: guildId,
     player_name: playerName.toLowerCase(),
