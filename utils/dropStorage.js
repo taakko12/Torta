@@ -33,16 +33,18 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
   });
   if (error) {
     if (error.code !== '23505') throw error;
-    // Backfill any image columns that were missing on the existing row
-    if (messageId != null && (imageUrl || screenshotUrl)) {
+    if (messageId != null) {
       const patch = {};
       if (imageUrl) patch.image_url = imageUrl;
       if (screenshotUrl) patch.screenshot_url = screenshotUrl;
-      await supabase.from('drops')
-        .update(patch)
-        .eq('guild_id', guildId)
-        .eq('discord_message_id', messageId)
-        .eq('embed_index', embedIndex ?? 0);
+      if (itemName) patch.item_name = itemName;
+      if (Object.keys(patch).length > 0) {
+        await supabase.from('drops')
+          .update(patch)
+          .eq('guild_id', guildId)
+          .eq('discord_message_id', messageId)
+          .eq('embed_index', embedIndex ?? 0);
+      }
     }
   }
 }
