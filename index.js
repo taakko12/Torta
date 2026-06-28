@@ -11,6 +11,8 @@ const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./uti
 const { startTrackscapeServer, sendToGame } = require('./utils/trackscapeServer');
 const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
+const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
+const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, BOSS_PAIRS } = require('./utils/pollHelpers');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -63,6 +65,8 @@ client.once('clientReady', () => {
   console.log(`[bot] Logged in as ${client.user.tag} (${client.commands.size} commands loaded)`);
   startTrackscapeServer(client, parseInt(process.env.PORT) || parseInt(process.env.TRACKSCAPE_PORT) || 3000);
   startReminderLoop();
+  checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
+  setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)
   ), 3000);
@@ -282,6 +286,50 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
+    // Poll vote/control buttons — looked up from Supabase so redeploys don't break active polls
+    if (/^(botw|sotw)_(vote_\d|accept|reroll)$/.test(interaction.customId)) {
+      const poll = await getPollByMessageId(interaction.message.id);
+      if (!poll) {
+        return interaction.reply({ content: '❌ This poll is no longer active.', flags: 64 });
+      }
+      const id = interaction.customId;
+
+      if (/_vote_\d$/.test(id)) {
+        const idx = parseInt(id.slice(-1));
+        if (isNaN(idx) || idx >= poll.candidates.length) return;
+        const userVotes = { ...poll.user_votes, [interaction.user.id]: idx };
+        await updatePoll(poll.id, { user_votes: userVotes });
+        return interaction.update({
+          embeds: [buildPollEmbed({ ...poll, user_votes: userVotes })],
+          components: buildPollComponents({ ...poll, user_votes: userVotes }),
+        });
+      }
+
+      if (id.endsWith('_accept')) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          return interaction.reply({ content: '❌ Only moderators can accept.', flags: 64 });
+        }
+        await interaction.deferUpdate();
+        return lockInPoll(poll, client, false);
+      }
+
+      if (id.endsWith('_reroll')) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          return interaction.reply({ content: '❌ Only moderators can reroll.', flags: 64 });
+        }
+        const newRejected = [...new Set([...poll.session_rejected, ...poll.candidates,
+          ...poll.candidates.map(c => BOSS_PAIRS[c]).filter(Boolean)])];
+        const newCandidates = rollCandidates(poll.poll_type, poll.pre_roll_history, newRejected);
+        await updatePoll(poll.id, { candidates: newCandidates, session_rejected: newRejected, user_votes: {} });
+        const updated = { ...poll, candidates: newCandidates, session_rejected: newRejected, user_votes: {} };
+        return interaction.update({
+          embeds: [buildPollEmbed(updated)],
+          components: buildPollComponents(updated),
+        });
+      }
+      return;
+    }
+
     if (action !== 'raid_signup' && action !== 'raid_dropout') return;
     const raidId = payload;
     const guildId = interaction.guildId;
@@ -415,6 +463,15 @@ function isLootEmbed(embed) {
 }
 
 client.on('error', err => console.error(`[discord] Client error: ${err.message}`));
+
+async function checkExpiredPolls() {
+  const expired = await getExpiredPolls();
+  for (const poll of expired) {
+    await lockInPoll(poll, client, true).catch(e =>
+      console.error(`[poll] Auto lock-in failed for ${poll.id}: ${e.message}`)
+    );
+  }
+}
 
 function startReminderLoop() {
   setInterval(() => {
