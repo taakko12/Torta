@@ -30,8 +30,18 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
     discord_message_id: messageId,
     embed_index: embedIndex ?? 0,
   });
-  // 23505 = unique_violation (dedup index hit) — silently skip duplicates
-  if (error && error.code !== '23505') throw error;
+  if (error) {
+    if (error.code !== '23505') throw error;
+    // Row already exists — backfill image_url if we now have one and it was missing
+    if (imageUrl && messageId != null) {
+      await supabase.from('drops')
+        .update({ image_url: imageUrl })
+        .eq('guild_id', guildId)
+        .eq('discord_message_id', messageId)
+        .eq('embed_index', embedIndex ?? 0)
+        .is('image_url', null);
+    }
+  }
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────────

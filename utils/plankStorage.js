@@ -20,14 +20,24 @@ async function setPlanksChannel(guildId, channelId) {
 
 // ── Write ────────────────────────────────────────────────────────────────────
 
-async function recordDeath(guildId, playerName, messageId = null) {
+async function recordDeath(guildId, playerName, messageId = null, imageUrl = null) {
   const { error } = await supabase.from('planks').insert({
     guild_id: guildId,
     player_name: playerName.toLowerCase(),
     discord_message_id: messageId,
+    image_url: imageUrl,
   });
-  // 23505 = unique_violation (dedup index hit) — silently skip duplicates
-  if (error && error.code !== '23505') throw error;
+  if (error) {
+    if (error.code !== '23505') throw error;
+    // Backfill image_url if we now have one and it was missing
+    if (imageUrl && messageId != null) {
+      await supabase.from('planks')
+        .update({ image_url: imageUrl })
+        .eq('guild_id', guildId)
+        .eq('discord_message_id', messageId)
+        .is('image_url', null);
+    }
+  }
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────────
@@ -47,7 +57,7 @@ async function getAlltimeLeaderboard(guildId) {
 async function getMostRecentPlank(guildId) {
   const { data } = await supabase
     .from('planks')
-    .select('player_name, recorded_at')
+    .select('player_name, image_url, recorded_at')
     .eq('guild_id', guildId)
     .order('recorded_at', { ascending: false })
     .limit(1)

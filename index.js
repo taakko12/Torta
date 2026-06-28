@@ -339,7 +339,8 @@ client.on('messageCreate', async message => {
   if (planksChannelId && message.channelId === planksChannelId) {
     const playerName = parseDeathMessage(message);
     if (playerName) {
-      await recordDeath(guildId, playerName, message.id);
+      const deathImage = parseDeathImage(message);
+      await recordDeath(guildId, playerName, message.id, deathImage);
       console.log(`[planks] Recorded death for "${playerName}" in guild ${guildId}`);
       const quip = DEATH_QUIPS[Math.floor(Math.random() * DEATH_QUIPS.length)];
       message.channel.send(`**${playerName}** — ${quip}`).catch(() => {});
@@ -359,6 +360,15 @@ client.on('messageCreate', async message => {
     }
   }
 });
+
+function parseDeathImage(message) {
+  // Dink sends the screenshot as an image in the embed or as an attachment
+  for (const embed of (message.embeds ?? [])) {
+    if (embed.image?.url) return embed.image.url;
+    if (embed.thumbnail?.url) return embed.thumbnail.url;
+  }
+  return message.attachments?.first()?.url ?? null;
+}
 
 function parseDeathMessage(message) {
   if (message.embeds.length > 0) {
@@ -494,7 +504,7 @@ async function retroParseGuild(guildId) {
     for (const msg of messages) {
       const name = parseDeathMessage(msg);
       if (name) {
-        await recordDeath(guildId, name, msg.id);
+        await recordDeath(guildId, name, msg.id, parseDeathImage(msg));
         inserted++;
       }
     }
