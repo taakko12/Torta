@@ -5,10 +5,18 @@
 
 -- Guild configuration (replaces channelId fields scattered across JSON files)
 CREATE TABLE IF NOT EXISTS guild_config (
-  guild_id           text PRIMARY KEY,
-  drops_channel_id   text,
-  planks_channel_id  text
+  guild_id              text PRIMARY KEY,
+  drops_channel_id      text,
+  planks_channel_id     text,
+  trackscape_code       text UNIQUE,
+  clanchat_channel_id   text,
+  broadcast_channel_id  text
 );
+
+-- If the table already exists, add the TrackScape columns
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS trackscape_code      text UNIQUE;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS clanchat_channel_id  text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS broadcast_channel_id text;
 
 -- Individual drop (loot) events — one row per embed processed
 CREATE TABLE IF NOT EXISTS drops (
