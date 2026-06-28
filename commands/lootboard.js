@@ -58,11 +58,7 @@ module.exports = {
     .setDescription('Loot leaderboard — tracks loot value')
     .addSubcommand(sub => sub
       .setName('show')
-      .setDescription('Show the current month loot leaderboard')
-    )
-    .addSubcommand(sub => sub
-      .setName('showall')
-      .setDescription('Show the all-time loot leaderboard')
+      .setDescription('Show monthly and all-time loot leaderboards')
     )
     .addSubcommand(sub => sub
       .setName('setchannel')
@@ -83,15 +79,26 @@ module.exports = {
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'show') {
-      const entries = await getMonthlyLeaderboard(guildId);
+      const [monthlyEntries, alltimeEntries] = await Promise.all([
+        getMonthlyLeaderboard(guildId),
+        getAlltimeLeaderboard(guildId),
+      ]);
       const [year, month] = currentMonth().split('-');
       const monthName = new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
-      return interaction.reply({ embeds: [buildLeaderboardEmbed(entries, `💰 Loot Leaderboard — ${monthName}`, 0xf1c40f)] });
-    }
 
-    if (sub === 'showall') {
-      const entries = await getAlltimeLeaderboard(guildId);
-      return interaction.reply({ embeds: [buildLeaderboardEmbed(entries, '💰 Loot Leaderboard — All Time', 0xe67e22)] });
+      const fmt = (entries) => entries.length === 0
+        ? '*No loot recorded yet.*'
+        : entries.slice(0, 10).map((e, i) => `${MEDALS[i] ?? `${i + 1}.`} **${e.name}** — ${formatGp(e.total)}`).join('\n');
+
+      const embed = new EmbedBuilder()
+        .setTitle('💰 Loot Leaderboard')
+        .setColor(0xf1c40f)
+        .addFields(
+          { name: `📅 ${monthName}`, value: fmt(monthlyEntries), inline: false },
+          { name: '⏳ All Time', value: fmt(alltimeEntries), inline: false },
+        )
+        .setTimestamp();
+      return interaction.reply({ embeds: [embed] });
     }
 
     // Admin-only below
