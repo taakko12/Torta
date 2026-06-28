@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { loadData } = require('../utils/storage');
 const {
   BOTW_DISPLAY, BOSS_PAIRS, HISTORY_SIZE,
-  nextCompWindow, formatCt, rollCandidates, buildPollEmbed, buildPollComponents,
+  nextCompWindow, rollCandidates, buildPollEmbed, buildPollComponents,
 } = require('../utils/pollHelpers');
 const { createPoll } = require('../utils/pollStorage');
 
@@ -18,7 +18,9 @@ module.exports = {
     const history = data.botwHistory ?? [];
 
     const { startsAt, endsAt } = nextCompWindow();
-    const windowStr = `${formatCt(startsAt)} → ${formatCt(endsAt)}`;
+    const startsUnix = Math.floor(startsAt.getTime() / 1000);
+    const endsUnix = Math.floor(endsAt.getTime() / 1000);
+    const windowStr = `<t:${startsUnix}:f> → <t:${endsUnix}:f>`;
     const votingCutoff = new Date(startsAt.getTime() - 10 * 60 * 1000);
     const cutoffUnix = Math.floor(votingCutoff.getTime() / 1000);
 
