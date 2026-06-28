@@ -55,7 +55,7 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
   if (recent) {
     const patch = {};
     if (imageUrl && !recent.image_url) patch.image_url = imageUrl;
-    if (screenshotUrl && !recent.screenshot_url) patch.screenshot_url = screenshotUrl;
+    if (screenshotUrl) patch.screenshot_url = screenshotUrl;
     if (itemName && !recent.item_name) patch.item_name = itemName;
     if (Object.keys(patch).length > 0) {
       const { error } = await supabase.from('drops').update(patch).eq('id', recent.id);
@@ -81,6 +81,10 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
       if (imageUrl) patch.image_url = imageUrl;
       if (screenshotUrl) patch.screenshot_url = screenshotUrl;
       if (itemName) patch.item_name = itemName;
+      // Also correct gp_value — handles the case where a previous scrape stored an
+      // aggregated total (e.g. 67M for a multi-item embed) and re-scrape now has
+      // the correct per-item value (e.g. 1.4M for Sunfire splinters).
+      if (gpValue) patch.gp_value = gpValue;
       if (Object.keys(patch).length > 0) {
         await supabase.from('drops')
           .update(patch)
@@ -253,6 +257,32 @@ function parseLootItem(embed) {
   return firstLine.replace(/\([\d.,]+[KMBkmb]?\)/g, '').replace(/has looted/i, '').trim() || 'Unknown item';
 }
 
+// Parses every "N x Item Name (value)" line from a Dink embed description.
+// Pearl/Dink bundles multi-item drops (e.g. Fortis Colosseum) into one embed;
+// this returns each item as a separate {item, gpValue} entry so they can be
+// recorded individually and dedup correctly against TrackScape broadcasts.
+// Falls back to single-item parsing for embeds that don't use the line format.
+function parseLootItems(embed) {
+  const desc = embed.description ?? '';
+  const items = [];
+
+  for (const line of desc.split('\n')) {
+    // Greedy item name match so "(uncharged)" style suffixes are included
+    const m = line.trim().match(/^(\d+)\s*x\s+(.+)\s+\(([\d.,]+[KMBkmb]?)\)$/);
+    if (!m) continue;
+    const value = parseGpString(m[3]);
+    if (value != null && value > 0) items.push({ item: m[2].trim(), gpValue: value });
+  }
+
+  if (items.length > 0) return items;
+
+  // Single-item fallback
+  const gpValue = parseLootEmbed(embed);
+  const item = parseLootItem(embed);
+  if (gpValue && gpValue > 0) return [{ item, gpValue }];
+  return [];
+}
+
 function parseLootImage(embed) {
   return embed.thumbnail?.url ?? null; // OSRS wiki item sprite
 }
@@ -293,6 +323,7 @@ module.exports = {
   resetMonthlyDrops,
   parseGpString,
   parseLootEmbed,
+  parseLootItems,
   parseLootImage,
   parseLootScreenshot,
   parseLootItem,

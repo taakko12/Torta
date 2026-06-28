@@ -6,7 +6,7 @@ const { loadRaids, updateRaid } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
 const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
-const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
+const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootItems, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
 const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./utils/welcomeStorage');
 const { startTrackscapeServer, sendToGame } = require('./utils/trackscapeServer');
 const { loadTrackscape } = require('./utils/trackscapeStorage');
@@ -355,14 +355,17 @@ client.on('messageCreate', async message => {
   }
 
   if (dropsChannelId && message.channelId === dropsChannelId) {
-    for (let i = 0; i < message.embeds.length; i++) {
-      const embed = message.embeds[i];
+    let dropIdx = 0;
+    for (const embed of message.embeds) {
       if (!isLootEmbed(embed)) continue;
       const playerName = parseLootPlayer(embed, message.content);
-      const gpValue = parseLootEmbed(embed);
-      if (playerName && gpValue > 0) {
-        await recordDrop(guildId, playerName, gpValue, parseLootItem(embed), parseLootImage(embed), parseLootScreenshot(embed, message), message.id, i);
-        console.log(`[loot] Recorded ${gpValue.toLocaleString()} gp for "${playerName}" in guild ${guildId}`);
+      if (!playerName) continue;
+      const imageUrl = parseLootImage(embed);
+      const screenshotUrl = parseLootScreenshot(embed, message);
+      for (const { item, gpValue } of parseLootItems(embed)) {
+        await recordDrop(guildId, playerName, gpValue, item, imageUrl, screenshotUrl, message.id, dropIdx);
+        console.log(`[loot] Recorded ${gpValue.toLocaleString()} gp (${item}) for "${playerName}" in guild ${guildId}`);
+        dropIdx++;
       }
     }
   }

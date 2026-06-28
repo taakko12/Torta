@@ -4,7 +4,7 @@ const {
   getMonthlyLeaderboard, getAlltimeLeaderboard,
   recordDrop, resetMonthlyDrops, getPlayerStats,
   getNameChangeMap, resolveNameFromMap, normalizeName,
-  parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem,
+  parseLootItems, parseLootImage, parseLootScreenshot, parseLootPlayer,
 } = require('../utils/dropStorage');
 const supabase = require('../utils/supabase');
 const { loadTrackscape } = require('../utils/trackscapeStorage');
@@ -265,19 +265,20 @@ module.exports = {
       // Scan drops channel (Dink webhooks / bot loot embeds)
       for (const msg of messages) {
         if (!msg.webhookId && !msg.author?.bot) continue;
-        let embedIdx = 0;
+        let dropIdx = 0;
         for (const embed of (msg.embeds ?? [])) {
-          if (isLootEmbed(embed)) {
-            const rawName = parseLootPlayer(embed, msg.content);
-            const gp = parseLootEmbed(embed);
-            if (rawName && gp > 0) {
-              const name = resolve(rawName);
-              totals[name] = (totals[name] ?? 0) + gp;
-              dropRows.push({ ts: msg.createdAt, name, item: parseLootItem(embed), imageUrl: parseLootImage(embed), screenshotUrl: parseLootScreenshot(embed, msg), gp, messageId: msg.id, embedIdx });
-              counted++;
-            }
+          if (!isLootEmbed(embed)) continue;
+          const rawName = parseLootPlayer(embed, msg.content);
+          if (!rawName) continue;
+          const name = resolve(rawName);
+          const imageUrl = parseLootImage(embed);
+          const screenshotUrl = parseLootScreenshot(embed, msg);
+          for (const { item, gpValue: gp } of parseLootItems(embed)) {
+            totals[name] = (totals[name] ?? 0) + gp;
+            dropRows.push({ ts: msg.createdAt, name, item, imageUrl, screenshotUrl, gp, messageId: msg.id, embedIdx: dropIdx });
+            counted++;
+            dropIdx++;
           }
-          embedIdx++;
         }
       }
 
@@ -396,62 +397,57 @@ module.exports = {
 
       for (const msg of messages) {
         if (!msg.webhookId && !msg.author?.bot) continue;
-        let embedIdx = 0;
+        let dropIdx = 0;
         for (const embed of msg.embeds ?? []) {
-          if (!isLootEmbed(embed)) { embedIdx++; continue; }
+          if (!isLootEmbed(embed)) continue;
 
           const screenshotUrl = parseLootScreenshot(embed, msg);
           const imageUrl = parseLootImage(embed);
-          if (!screenshotUrl && !imageUrl) { embedIdx++; noMatch++; continue; }
-
           const rawName = parseLootPlayer(embed, msg.content);
-          const gp = parseLootEmbed(embed);
-          const itemName = parseLootItem(embed);
-          if (!rawName || !gp) { embedIdx++; continue; }
-
+          if (!rawName) continue;
           const name = normalizeName(resolve(rawName));
 
-          // Find a TrackScape record for this player+item that has no screenshot.
-          // Try item name first, fall back to gp_value.
-          let target = null;
-          const baseQ = () => supabase
-            .from('drops')
-            .select('id')
-            .eq('guild_id', guildId)
-            .eq('player_name', name)
-            .is('screenshot_url', null)
-            .neq('discord_message_id', msg.id) // exclude this Dink message itself
-            .order('id', { ascending: true })
-            .limit(1);
+          for (const { item: itemName, gpValue: gp } of parseLootItems(embed)) {
+            if (!screenshotUrl && !imageUrl) { noMatch++; dropIdx++; continue; }
 
-          if (itemName) {
-            const { data } = await baseQ().ilike('item_name', itemName).maybeSingle();
-            target = data;
-          }
-          if (!target) {
-            const { data } = await baseQ().eq('gp_value', gp).maybeSingle();
-            target = data;
-          }
-
-          if (target) {
-            // Backfill image onto the TrackScape record
-            const patch = {};
-            if (screenshotUrl) patch.screenshot_url = screenshotUrl;
-            if (imageUrl) patch.image_url = imageUrl;
-            await supabase.from('drops').update(patch).eq('id', target.id);
-            patched++;
-
-            // Delete the now-redundant Dink record to prevent double-counting
-            await supabase.from('drops')
-              .delete()
+            const baseQ = () => supabase
+              .from('drops')
+              .select('id')
               .eq('guild_id', guildId)
-              .eq('discord_message_id', msg.id)
-              .eq('embed_index', embedIdx);
-            deleted++;
-          } else {
-            noMatch++;
+              .eq('player_name', name)
+              .is('screenshot_url', null)
+              .neq('discord_message_id', msg.id)
+              .order('id', { ascending: true })
+              .limit(1);
+
+            let target = null;
+            if (itemName) {
+              const { data } = await baseQ().ilike('item_name', itemName).maybeSingle();
+              target = data;
+            }
+            if (!target) {
+              const { data } = await baseQ().eq('gp_value', gp).maybeSingle();
+              target = data;
+            }
+
+            if (target) {
+              const patch = {};
+              if (screenshotUrl) patch.screenshot_url = screenshotUrl;
+              if (imageUrl) patch.image_url = imageUrl;
+              await supabase.from('drops').update(patch).eq('id', target.id);
+              patched++;
+
+              await supabase.from('drops')
+                .delete()
+                .eq('guild_id', guildId)
+                .eq('discord_message_id', msg.id)
+                .eq('embed_index', dropIdx);
+              deleted++;
+            } else {
+              noMatch++;
+            }
+            dropIdx++;
           }
-          embedIdx++;
         }
       }
 
