@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
 const { loadData, saveData } = require('../utils/storage');
 
 const SOTW_SKILLS = [
@@ -16,6 +16,7 @@ const DISPLAY = {
 };
 
 const HISTORY_SIZE = 5;
+const REROLL_THRESHOLD = 5;
 
 function ctToUtc(year, month, day, hour, minute = 0) {
   const pseudo = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
@@ -60,7 +61,6 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   const groupId = process.env.WOM_GROUP_ID;
   const verificationCode = process.env.WOM_GROUP_VERIFICATION_CODE;
   if (!groupId || !verificationCode) return null;
-
   try {
     const res = await fetch('https://api.wiseoldman.net/v2/competitions', {
       method: 'POST',
@@ -74,10 +74,20 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   }
 }
 
+function buildButtons(votes = 0) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('sotw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('sotw_reroll')
+      .setLabel(votes > 0 ? `🔄 Reroll (${votes}/${REROLL_THRESHOLD})` : '🔄 Reroll')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('rollsotw')
-    .setDescription('Randomly select a Skill of the Week — excludes combat skills and the last 5 picks')
+    .setDescription('Randomly select a Skill of the Week — Mon 1pm CT to next Mon 12pm CT')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
@@ -86,42 +96,119 @@ module.exports = {
 
     const history = data.sotwHistory ?? [];
     const recentSet = new Set(history.slice(-HISTORY_SIZE));
+    const sessionRejected = new Set();
+    const rerollVoters = new Set();
 
-    let available = SOTW_SKILLS.filter(s => !recentSet.has(s));
-    if (available.length === 0) {
+    const { startsAt, endsAt } = nextSotwWindow();
+    const windowStr = `${formatCt(startsAt)} → ${formatCt(endsAt)}`;
+
+    const buildPool = () => SOTW_SKILLS.filter(s => !recentSet.has(s) && !sessionRejected.has(s));
+
+    let pool = buildPool();
+    if (pool.length === 0) {
       data.sotwHistory = [];
-      available = [...SOTW_SKILLS];
+      pool = [...SOTW_SKILLS];
     }
 
-    const rolled = available[Math.floor(Math.random() * available.length)];
-    data.sotwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
-    saveData(guildId, data);
-
+    let rolled = pool[Math.floor(Math.random() * pool.length)];
     const recentNames = history.slice(-HISTORY_SIZE).map(s => DISPLAY[s] ?? s);
-    const { startsAt, endsAt } = nextSotwWindow();
-    const title = `Skill of the Week — ${DISPLAY[rolled]}`;
 
-    const embed = new EmbedBuilder()
+    const buildEmbed = (skill, votes = 0) => new EmbedBuilder()
       .setTitle('📈 Skill of the Week')
       .setColor(0x57f287)
-      .setDescription(`## ${DISPLAY[rolled]}`)
+      .setDescription(`## ${DISPLAY[skill] ?? skill}`)
       .addFields(
-        { name: 'Starts', value: formatCt(startsAt), inline: true },
-        { name: 'Ends',   value: formatCt(endsAt),   inline: true },
+        { name: 'Competition window', value: windowStr },
         { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
       )
+      .setFooter({ text: `Mods: Accept to lock in | Anyone: ${REROLL_THRESHOLD} votes to reroll • Times out in 5 min` })
       .setTimestamp();
 
-    const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
-    if (comp?.id) {
-      embed.addFields({
-        name: '🏆 WOM Competition',
-        value: `[${title}](https://wiseoldman.net/competitions/${comp.id})`,
-      });
-    } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
-      embed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
+    function doReroll() {
+      sessionRejected.add(rolled);
+      let next = buildPool();
+      if (next.length === 0) {
+        sessionRejected.clear();
+        next = buildPool();
+      }
+      rolled = next[Math.floor(Math.random() * next.length)];
+      rerollVoters.clear();
     }
 
-    return interaction.reply({ embeds: [embed] });
+    const response = await interaction.reply({
+      embeds: [buildEmbed(rolled)],
+      components: [buildButtons()],
+      fetchReply: true,
+    });
+
+    const collector = response.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      time: 5 * 60 * 1000,
+    });
+
+    collector.on('collect', async i => {
+      if (i.customId === 'sotw_accept') {
+        if (!i.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          await i.reply({ content: '❌ Only moderators can accept the roll.', ephemeral: true });
+          return;
+        }
+
+        data.sotwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
+        saveData(guildId, data);
+
+        const title = `Skill of the Week — ${DISPLAY[rolled] ?? rolled}`;
+        const finalEmbed = new EmbedBuilder()
+          .setTitle('📈 Skill of the Week — Locked In')
+          .setColor(0x57f287)
+          .setDescription(`## ${DISPLAY[rolled] ?? rolled}`)
+          .addFields(
+            { name: 'Competition window', value: windowStr },
+            { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+          )
+          .setTimestamp();
+
+        const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
+        if (comp?.id) {
+          finalEmbed.addFields({
+            name: '🏆 WOM Competition',
+            value: `[${title}](https://wiseoldman.net/competitions/${comp.id})`,
+          });
+        } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
+          finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
+        } else {
+          finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
+        }
+
+        await i.update({ embeds: [finalEmbed], components: [] });
+        collector.stop('accepted');
+
+      } else if (i.customId === 'sotw_reroll') {
+        if (i.user.id === interaction.user.id) {
+          doReroll();
+          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
+          return;
+        }
+
+        if (rerollVoters.has(i.user.id)) {
+          await i.reply({ content: '⚠️ You already voted to reroll.', ephemeral: true });
+          return;
+        }
+
+        rerollVoters.add(i.user.id);
+
+        if (rerollVoters.size >= REROLL_THRESHOLD) {
+          doReroll();
+          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
+        } else {
+          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons(rerollVoters.size)] });
+        }
+      }
+    });
+
+    collector.on('end', (_, reason) => {
+      if (reason !== 'accepted') {
+        interaction.editReply({ components: [] }).catch(() => {});
+      }
+    });
   },
 };
