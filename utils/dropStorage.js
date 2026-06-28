@@ -1,47 +1,96 @@
-const fs = require('fs');
-const path = require('path');
-const { currentMonth } = require('./plankStorage');
+const supabase = require('./supabase');
 
-const DEFAULT = { channelId: null, month: null, drops: {}, allTime: {} };
+// ── Channel config ───────────────────────────────────────────────────────────
 
-function dataPath(guildId) {
-  return path.join(__dirname, '..', 'data', guildId, 'drops.json');
+async function getDropsChannelId(guildId) {
+  const { data } = await supabase
+    .from('guild_config')
+    .select('drops_channel_id')
+    .eq('guild_id', guildId)
+    .maybeSingle();
+  return data?.drops_channel_id ?? null;
 }
 
-function loadDrops(guildId) {
-  const p = dataPath(guildId);
-  if (!fs.existsSync(p)) {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(DEFAULT, null, 2));
-    return { ...DEFAULT };
-  }
-  return JSON.parse(fs.readFileSync(p, 'utf-8'));
+async function setDropsChannel(guildId, channelId) {
+  const { error } = await supabase
+    .from('guild_config')
+    .upsert({ guild_id: guildId, drops_channel_id: channelId }, { onConflict: 'guild_id' });
+  if (error) throw error;
 }
 
-function saveDrops(guildId, data) {
-  const p = dataPath(guildId);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(data, null, 2));
+// ── Write ────────────────────────────────────────────────────────────────────
+
+async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, messageId = null, embedIndex = 0) {
+  const { error } = await supabase.from('drops').insert({
+    guild_id: guildId,
+    player_name: playerName.toLowerCase(),
+    gp_value: gpValue,
+    item_name: itemName,
+    image_url: imageUrl,
+    discord_message_id: messageId,
+    embed_index: embedIndex ?? 0,
+  });
+  // 23505 = unique_violation (dedup index hit) — silently skip duplicates
+  if (error && error.code !== '23505') throw error;
 }
 
-function checkAndReset(data) {
-  const month = currentMonth();
-  if (data.month !== month) {
-    data.month = month;
-    data.drops = {};
-    return true;
-  }
-  return false;
+// ── Read ─────────────────────────────────────────────────────────────────────
+
+async function getMonthlyLeaderboard(guildId) {
+  const { data, error } = await supabase.rpc('monthly_drop_leaderboard', { p_guild_id: guildId });
+  if (error) throw error;
+  return (data ?? []).map(r => ({ name: r.player_name, total: Number(r.total) }));
 }
 
-function getDropLeaderboard(data) {
-  checkAndReset(data);
-  return Object.entries(data.drops)
-    .sort(([, a], [, b]) => b - a)
-    .map(([name, total]) => ({ name, total }));
+async function getAlltimeLeaderboard(guildId) {
+  const { data, error } = await supabase.rpc('alltime_drop_leaderboard', { p_guild_id: guildId });
+  if (error) throw error;
+  return (data ?? []).map(r => ({ name: r.player_name, total: Number(r.total) }));
 }
 
-// Parse a GP string that may use K/M/B shorthand (e.g. "1.10M", "876K", "1,234,567")
+async function getMostRecentDrop(guildId) {
+  const { data } = await supabase
+    .from('drops')
+    .select('player_name, gp_value, item_name, image_url, recorded_at')
+    .eq('guild_id', guildId)
+    .order('recorded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ?? null;
+}
+
+// ── Admin ────────────────────────────────────────────────────────────────────
+
+async function renamePlayer(guildId, oldName, newName) {
+  const { count } = await supabase
+    .from('drops')
+    .select('*', { count: 'exact', head: true })
+    .eq('guild_id', guildId)
+    .ilike('player_name', oldName);
+  if (!count) return 0;
+
+  const { error } = await supabase
+    .from('drops')
+    .update({ player_name: newName.toLowerCase() })
+    .eq('guild_id', guildId)
+    .ilike('player_name', oldName);
+  if (error) throw error;
+  return count;
+}
+
+async function resetMonthlyDrops(guildId) {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { error } = await supabase
+    .from('drops')
+    .delete()
+    .eq('guild_id', guildId)
+    .gte('recorded_at', monthStart);
+  if (error) throw error;
+}
+
+// ── Parsing helpers (pure functions) ─────────────────────────────────────────
+
 function parseGpString(str) {
   if (!str) return null;
   const clean = str.replace(/,/g, '').trim();
@@ -55,65 +104,64 @@ function parseGpString(str) {
   return Math.round(num);
 }
 
-// Parse GP value from a Dink loot embed. Returns null if not parseable.
 function parseLootEmbed(embed) {
-  // Prefer the "Total Value" field (Dink always includes this)
   for (const field of (embed.fields ?? [])) {
     if (/total\s*value/i.test(field.name)) {
       const gp = parseGpString(field.value.replace(/\s*gp/i, '').trim());
       if (gp != null) return gp;
     }
   }
-
-  // Fallback: scan description for inline values like "(1.10M)" or "1,234,567 gp"
   const desc = embed.description ?? '';
   const allMatches = [...desc.matchAll(/\(([\d.,]+[KMBkmb]?)\)/g)];
   if (allMatches.length > 0) {
     const values = allMatches.map(m => parseGpString(m[1]) ?? 0);
     return Math.max(...values);
   }
-
   const gpMatch = desc.match(/([\d.,]+[KMBkmb]?)\s*gp/i);
   if (gpMatch) return parseGpString(gpMatch[1]);
-
   return null;
 }
 
-// Parse player name from a Dink loot embed/content
+function parseLootItem(embed) {
+  const title = embed.title ?? '';
+  if (title) {
+    return title.replace(/^(valuable\s+drop|loot|drop)\s*:\s*/i, '').trim() || title.trim();
+  }
+  const firstLine = (embed.description ?? '').split('\n')[0];
+  return firstLine.replace(/\([\d.,]+[KMBkmb]?\)/g, '').replace(/has looted/i, '').trim() || 'Unknown item';
+}
+
+function parseLootImage(embed) {
+  return embed.thumbnail?.url ?? embed.image?.url ?? null;
+}
+
 function parseLootPlayer(embed, content) {
   if (embed) {
-    // Author name is the most reliable (Dink sets it to the player RSN)
     const authorName = embed.author?.name ?? '';
     if (authorName) return authorName.trim();
-
-    // Description: "PlayerName has looted: ..."
     const desc = embed.description ?? '';
     const descMatch = desc.match(/^(.+?)\s+has looted/i);
     if (descMatch) return descMatch[1].trim();
   }
-
   if (content) {
     const match = content.match(/^(.+?)\s+has looted/i);
     if (match) return match[1].trim();
   }
-
   return null;
 }
 
-function recordDrop(guildId, data, playerName, gpValue) {
-  checkAndReset(data);
-  const key = playerName.toLowerCase();
-  data.drops[key] = (data.drops[key] ?? 0) + gpValue;
-  if (!data.allTime) data.allTime = {};
-  data.allTime[key] = (data.allTime[key] ?? 0) + gpValue;
-  saveDrops(guildId, data);
-}
-
-function getAlltimeLeaderboard(data) {
-  const allTime = data.allTime ?? {};
-  return Object.entries(allTime)
-    .sort(([, a], [, b]) => b - a)
-    .map(([name, total]) => ({ name, total }));
-}
-
-module.exports = { loadDrops, saveDrops, recordDrop, getDropLeaderboard, getAlltimeLeaderboard, parseLootEmbed, parseLootPlayer, checkAndReset };
+module.exports = {
+  getDropsChannelId,
+  setDropsChannel,
+  recordDrop,
+  getMonthlyLeaderboard,
+  getAlltimeLeaderboard,
+  getMostRecentDrop,
+  renamePlayer,
+  resetMonthlyDrops,
+  parseGpString,
+  parseLootEmbed,
+  parseLootImage,
+  parseLootItem,
+  parseLootPlayer,
+};

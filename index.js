@@ -5,9 +5,10 @@ const { Client, GatewayIntentBits, Collection, EmbedBuilder, PermissionFlagsBits
 const { loadRaids, updateRaid } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
-const { loadPlanks, recordDeath } = require('./utils/plankStorage');
-const { loadDrops, recordDrop, parseLootEmbed, parseLootPlayer, getAlltimeLeaderboard } = require('./utils/dropStorage');
+const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
+const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootImage, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
 const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./utils/welcomeStorage');
+const { startTrackscapeServer } = require('./utils/trackscapeServer');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 
 const DEATH_QUIPS = [
@@ -29,6 +30,11 @@ const DEATH_QUIPS = [
   'maybe try a safer spot next time',
   'bold strategy, did not pay off',
   'the plank leaderboard thanks you for your contribution',
+  'just keep clicking man...',
+  'bosh, really good',
+  '80% chance this was tru',
+  'fuck you pearl',
+  '"dont you have like 1000 kc here? stop dying man"'
 ];
 
 const client = new Client({
@@ -54,6 +60,7 @@ for (const file of commandFiles) {
 
 client.once('clientReady', () => {
   console.log(`[bot] Logged in as ${client.user.tag} (${client.commands.size} commands loaded)`);
+  startTrackscapeServer(client, parseInt(process.env.TRACKSCAPE_PORT) || 3000);
   startReminderLoop();
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)
@@ -253,8 +260,7 @@ client.on('interactionCreate', async interaction => {
       const newEmbed = EmbedBuilder.from(oldEmbed);
 
       if (action === 'loot_approve') {
-        const drops = require('./utils/dropStorage').loadDrops(guildId);
-        recordDrop(guildId, drops, entry.rsn, entry.gpValue);
+        await recordDrop(guildId, entry.rsn, entry.gpValue, entry.item ?? null);
         newEmbed.setTitle('💰 Loot Submission — Approved');
         newEmbed.setColor(0x57f287);
         newEmbed.addFields({ name: 'Reviewed by', value: `<@${interaction.user.id}>`, inline: true });
@@ -325,25 +331,29 @@ client.on('messageCreate', async message => {
 
   const guildId = message.guildId;
 
-  const planks = loadPlanks(guildId);
-  if (planks.channelId && message.channelId === planks.channelId) {
+  const [planksChannelId, dropsChannelId] = await Promise.all([
+    getPlanksChannelId(guildId),
+    getDropsChannelId(guildId),
+  ]);
+
+  if (planksChannelId && message.channelId === planksChannelId) {
     const playerName = parseDeathMessage(message);
     if (playerName) {
-      recordDeath(guildId, planks, playerName);
+      await recordDeath(guildId, playerName, message.id);
       console.log(`[planks] Recorded death for "${playerName}" in guild ${guildId}`);
       const quip = DEATH_QUIPS[Math.floor(Math.random() * DEATH_QUIPS.length)];
       message.channel.send(`**${playerName}** — ${quip}`).catch(() => {});
     }
   }
 
-  const drops = loadDrops(guildId);
-  if (drops.channelId && message.channelId === drops.channelId) {
-    for (const embed of message.embeds) {
+  if (dropsChannelId && message.channelId === dropsChannelId) {
+    for (let i = 0; i < message.embeds.length; i++) {
+      const embed = message.embeds[i];
       if (!isLootEmbed(embed)) continue;
       const playerName = parseLootPlayer(embed, message.content);
       const gpValue = parseLootEmbed(embed);
       if (playerName && gpValue > 0) {
-        recordDrop(guildId, drops, playerName, gpValue);
+        await recordDrop(guildId, playerName, gpValue, parseLootItem(embed), parseLootImage(embed), message.id, i);
         console.log(`[loot] Recorded ${gpValue.toLocaleString()} gp for "${playerName}" in guild ${guildId}`);
       }
     }
@@ -466,54 +476,48 @@ async function retroParseAllGuilds() {
 }
 
 async function retroParseGuild(guildId) {
-  const planks = loadPlanks(guildId);
-  const drops = loadDrops(guildId);
+  const [planksChannelId, dropsChannelId] = await Promise.all([
+    getPlanksChannelId(guildId),
+    getDropsChannelId(guildId),
+  ]);
 
-  const hasDeathChannel = !!planks.channelId;
-  const hasDropChannel = !!drops.channelId;
-  if (!hasDeathChannel && !hasDropChannel) return;
+  if (!planksChannelId && !dropsChannelId) return;
 
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
   const afterSnowflake = dateToSnowflake(monthStart);
-  const { currentMonth } = require('./utils/plankStorage');
 
-  if (hasDeathChannel) {
-    console.log(`[retro] Rebuilding death leaderboard for guild ${guildId}`);
-    const freshPlanks = { channelId: planks.channelId, month: currentMonth(), deaths: {} };
-    const messages = await fetchMessagesAfter(planks.channelId, afterSnowflake);
+  if (planksChannelId) {
+    console.log(`[retro] Scanning planks channel for missed deaths in guild ${guildId}`);
+    const messages = await fetchMessagesAfter(planksChannelId, afterSnowflake);
+    let inserted = 0;
     for (const msg of messages) {
       const name = parseDeathMessage(msg);
       if (name) {
-        const key = name.toLowerCase();
-        freshPlanks.deaths[key] = (freshPlanks.deaths[key] ?? 0) + 1;
+        await recordDeath(guildId, name, msg.id);
+        inserted++;
       }
     }
-    const { savePlanks } = require('./utils/plankStorage');
-    savePlanks(guildId, freshPlanks);
-    const total = Object.values(freshPlanks.deaths).reduce((a, b) => a + b, 0);
-    console.log(`[retro] Deaths: ${total} across ${Object.keys(freshPlanks.deaths).length} players`);
+    console.log(`[retro] Planks: processed ${messages.length} messages, ${inserted} deaths`);
   }
 
-  if (hasDropChannel) {
-    console.log(`[retro] Rebuilding loot leaderboard for guild ${guildId}`);
-    const freshDrops = { channelId: drops.channelId, month: currentMonth(), drops: {} };
-    const messages = await fetchMessagesAfter(drops.channelId, afterSnowflake);
+  if (dropsChannelId) {
+    console.log(`[retro] Scanning drops channel for missed loot in guild ${guildId}`);
+    const messages = await fetchMessagesAfter(dropsChannelId, afterSnowflake);
+    let inserted = 0;
     for (const msg of messages) {
-      for (const embed of (msg.embeds ?? [])) {
+      for (let i = 0; i < (msg.embeds ?? []).length; i++) {
+        const embed = msg.embeds[i];
         if (!isLootEmbed(embed)) continue;
         const name = parseLootPlayer(embed, msg.content);
         const gp = parseLootEmbed(embed);
         if (name && gp > 0) {
-          const key = name.toLowerCase();
-          freshDrops.drops[key] = (freshDrops.drops[key] ?? 0) + gp;
+          await recordDrop(guildId, name, gp, parseLootItem(embed), parseLootImage(embed), msg.id, i);
+          inserted++;
         }
       }
     }
-    const { saveDrops } = require('./utils/dropStorage');
-    saveDrops(guildId, freshDrops);
-    const total = Object.values(freshDrops.drops).reduce((a, b) => a + b, 0);
-    console.log(`[retro] Loot: ${total.toLocaleString()} gp across ${Object.keys(freshDrops.drops).length} players`);
+    console.log(`[retro] Drops: processed ${messages.length} messages, ${inserted} loot entries`);
   }
 }
 

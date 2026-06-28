@@ -1,5 +1,9 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
-const { loadPlanks, savePlanks, getLeaderboard, currentMonth } = require('../utils/plankStorage');
+const {
+  getPlanksChannelId, setPlanksChannel,
+  getMonthlyLeaderboard, resetMonthlyPlanks,
+  currentMonth,
+} = require('../utils/plankStorage');
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 
@@ -24,10 +28,9 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();
-    const data = loadPlanks(guildId);
 
     if (sub === 'show') {
-      const entries = getLeaderboard(data);
+      const entries = await getMonthlyLeaderboard(guildId);
       const [year, month] = currentMonth().split('-');
       const monthName = new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
@@ -47,25 +50,23 @@ module.exports = {
         embed.setFooter({ text: `${entries.length} player${entries.length === 1 ? '' : 's'} recorded` });
       }
 
-      await interaction.reply({ embeds: [embed] });
+      return interaction.reply({ embeds: [embed] });
+    }
 
-    } else if (sub === 'setchannel') {
-      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
-      }
+    // Admin-only below
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+      return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
+    }
+
+    if (sub === 'setchannel') {
       const channel = interaction.options.getChannel('channel');
-      data.channelId = channel.id;
-      savePlanks(guildId, data);
-      await interaction.reply({ content: `✅ Now watching ${channel} for death notifications.`, flags: 64 });
+      await setPlanksChannel(guildId, channel.id);
+      return interaction.reply({ content: `✅ Now watching ${channel} for death notifications.`, flags: 64 });
+    }
 
-    } else if (sub === 'reset') {
-      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
-      }
-      data.deaths = {};
-      data.month = currentMonth();
-      savePlanks(guildId, data);
-      await interaction.reply({ content: '✅ Plank leaderboard has been reset.', flags: 64 });
+    if (sub === 'reset') {
+      await resetMonthlyPlanks(guildId);
+      return interaction.reply({ content: '✅ Plank leaderboard has been reset.', flags: 64 });
     }
   }
 };

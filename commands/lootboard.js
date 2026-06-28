@@ -1,5 +1,10 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
-const { loadDrops, saveDrops, getDropLeaderboard, getAlltimeLeaderboard, parseLootEmbed, parseLootPlayer } = require('../utils/dropStorage');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const {
+  getDropsChannelId, setDropsChannel,
+  getMonthlyLeaderboard, getAlltimeLeaderboard,
+  recordDrop, resetMonthlyDrops,
+  parseLootEmbed, parseLootImage, parseLootPlayer, parseLootItem,
+} = require('../utils/dropStorage');
 const { currentMonth } = require('../utils/plankStorage');
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -66,7 +71,7 @@ module.exports = {
     )
     .addSubcommand(sub => sub
       .setName('scrape')
-      .setDescription('Scrape entire channel history to build the all-time leaderboard')
+      .setDescription('Scrape full channel history and import all drops (deduplicates automatically)')
     )
     .addSubcommand(sub => sub
       .setName('reset')
@@ -76,17 +81,16 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();
-    const data = loadDrops(guildId);
 
     if (sub === 'show') {
-      const entries = getDropLeaderboard(data);
+      const entries = await getMonthlyLeaderboard(guildId);
       const [year, month] = currentMonth().split('-');
       const monthName = new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
       return interaction.reply({ embeds: [buildLeaderboardEmbed(entries, `💰 Loot Leaderboard — ${monthName}`, 0xf1c40f)] });
     }
 
     if (sub === 'showall') {
-      const entries = getAlltimeLeaderboard(data);
+      const entries = await getAlltimeLeaderboard(guildId);
       return interaction.reply({ embeds: [buildLeaderboardEmbed(entries, '💰 Loot Leaderboard — All Time', 0xe67e22)] });
     }
 
@@ -97,26 +101,24 @@ module.exports = {
 
     if (sub === 'setchannel') {
       const channel = interaction.options.getChannel('channel');
-      data.channelId = channel.id;
-      saveDrops(guildId, data);
+      await setDropsChannel(guildId, channel.id);
       return interaction.reply({ content: `✅ Now watching ${channel} for loot notifications.`, flags: 64 });
     }
 
     if (sub === 'reset') {
-      data.drops = {};
-      data.month = currentMonth();
-      saveDrops(guildId, data);
+      await resetMonthlyDrops(guildId);
       return interaction.reply({ content: '✅ Monthly loot leaderboard has been reset. All-time totals are unchanged.', flags: 64 });
     }
 
     if (sub === 'scrape') {
-      if (!data.channelId) {
+      const channelId = await getDropsChannelId(guildId);
+      if (!channelId) {
         return interaction.reply({ content: '❌ No loot channel set. Run `/lootboard setchannel` first.', flags: 64 });
       }
 
       await interaction.deferReply({ flags: 64 });
 
-      const channel = await interaction.client.channels.fetch(data.channelId).catch(() => null);
+      const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
       if (!channel) {
         return interaction.editReply('❌ Loot channel not found. Run `/lootboard setchannel` again.');
       }
@@ -131,32 +133,67 @@ module.exports = {
         return interaction.editReply('❌ Failed to fetch channel history.');
       }
 
-      const allTime = {};
+      const totals = {};
+      const dropRows = [];
       let counted = 0;
 
       for (const msg of messages) {
         if (!msg.webhookId && !msg.author?.bot) continue;
+        let embedIdx = 0;
         for (const embed of (msg.embeds ?? [])) {
-          if (!isLootEmbed(embed)) continue;
-          const name = parseLootPlayer(embed, msg.content);
-          const gp = parseLootEmbed(embed);
-          if (name && gp > 0) {
-            const key = name.toLowerCase();
-            allTime[key] = (allTime[key] ?? 0) + gp;
-            counted++;
+          if (isLootEmbed(embed)) {
+            const name = parseLootPlayer(embed, msg.content);
+            const gp = parseLootEmbed(embed);
+            if (name && gp > 0) {
+              const key = name.toLowerCase();
+              totals[key] = (totals[key] ?? 0) + gp;
+              dropRows.push({ ts: msg.createdAt, name, item: parseLootItem(embed), imageUrl: parseLootImage(embed), gp, messageId: msg.id, embedIdx });
+              counted++;
+            }
           }
+          embedIdx++;
         }
       }
 
-      data.allTime = allTime;
-      saveDrops(guildId, data);
+      // Insert into DB — dedup index silently skips any already-recorded messages
+      for (const row of dropRows) {
+        await recordDrop(guildId, row.name, row.gp, row.item, row.imageUrl, row.messageId, row.embedIdx);
+      }
 
-      const total = Object.values(allTime).reduce((a, b) => a + b, 0);
-      console.log(`[lootboard scrape] ${counted} drops, ${formatGp(total)} total across ${Object.keys(allTime).length} players in guild ${guildId}`);
+      const total = Object.values(totals).reduce((a, b) => a + b, 0);
+      const playerCount = Object.keys(totals).length;
 
-      return interaction.editReply(
-        `✅ Scrape complete! Found **${counted} drops** totalling **${formatGp(total)}** across **${Object.keys(allTime).length} players** from ${messages.length.toLocaleString()} messages.`
-      );
+      dropRows.sort((a, b) => a.ts - b.ts);
+      const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+      const lines = [
+        `Loot Scrape Log — ${new Date().toISOString()}`,
+        `Messages scanned : ${messages.length.toLocaleString()}`,
+        `Drops found      : ${counted.toLocaleString()}`,
+        `Players          : ${playerCount}`,
+        `Total value      : ${formatGp(total)}`,
+        '',
+        '=== ITEMIZED DROPS ===',
+        'Timestamp'.padEnd(22) + 'Player'.padEnd(22) + 'Item'.padEnd(40) + 'Value',
+        '-'.repeat(100),
+        ...dropRows.map(r => {
+          const ts = r.ts.toISOString().replace('T', ' ').slice(0, 16);
+          return ts.padEnd(22) + r.name.padEnd(22) + r.item.padEnd(40) + formatGp(r.gp);
+        }),
+        '',
+        '=== PLAYER TOTALS ===',
+        'Player'.padEnd(30) + 'Total',
+        '-'.repeat(50),
+        ...sorted.map(([name, gp]) => name.padEnd(30) + formatGp(gp)),
+      ];
+      const attachment = new AttachmentBuilder(Buffer.from(lines.join('\n'), 'utf8'), { name: 'scrape-log.txt' });
+
+      console.log(`[lootboard scrape] ${counted} drops, ${formatGp(total)} across ${playerCount} players in guild ${guildId}`);
+
+      return interaction.editReply({
+        content: `✅ Scrape complete — **${counted} drops**, **${formatGp(total)}**, **${playerCount} players** from ${messages.length.toLocaleString()} messages. All imported (duplicates skipped automatically).`,
+        files: [attachment],
+      });
     }
   }
 };
