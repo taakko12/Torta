@@ -30,24 +30,27 @@ async function setDropsChannel(guildId, channelId) {
 async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0) {
   const name = normalizeName(playerName);
 
-  // Cross-source dedup (Dink vs TrackScape plugin): same player + same item
-  // within 5 minutes is a duplicate regardless of whether the GP value differs
-  // between sources. If item name isn't available from one source, fall back to
-  // matching on player + gp_value. Backfill richer metadata onto the first row.
+  // Cross-source dedup (Dink vs TrackScape plugin): look for a recent drop
+  // from the same player within 5 minutes. Try item name first (case-insensitive),
+  // then fall back to gp_value — item names can differ slightly between sources.
   const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  let dupQuery = supabase
+  const baseQuery = () => supabase
     .from('drops')
     .select('id, image_url, screenshot_url, item_name')
     .eq('guild_id', guildId)
     .eq('player_name', name)
     .gte('recorded_at', since)
     .limit(1);
+
+  let recent = null;
   if (itemName) {
-    dupQuery = dupQuery.ilike('item_name', itemName);
-  } else {
-    dupQuery = dupQuery.eq('gp_value', gpValue);
+    const { data } = await baseQuery().ilike('item_name', itemName).maybeSingle();
+    recent = data;
   }
-  const { data: recent } = await dupQuery.maybeSingle();
+  if (!recent) {
+    const { data } = await baseQuery().eq('gp_value', gpValue).maybeSingle();
+    recent = data;
+  }
 
   if (recent) {
     const patch = {};
@@ -55,7 +58,8 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
     if (screenshotUrl && !recent.screenshot_url) patch.screenshot_url = screenshotUrl;
     if (itemName && !recent.item_name) patch.item_name = itemName;
     if (Object.keys(patch).length > 0) {
-      await supabase.from('drops').update(patch).eq('id', recent.id);
+      const { error } = await supabase.from('drops').update(patch).eq('id', recent.id);
+      if (error) console.error(`[recordDrop] backfill update failed for id ${recent.id}: ${error.message}`);
     }
     return;
   }
