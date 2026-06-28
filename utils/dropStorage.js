@@ -36,7 +36,7 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
   const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const baseQuery = () => supabase
     .from('drops')
-    .select('id, image_url, screenshot_url, item_name')
+    .select('id, image_url, screenshot_url, item_name, gp_value')
     .eq('guild_id', guildId)
     .eq('player_name', name)
     .gte('recorded_at', since)
@@ -57,6 +57,9 @@ async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUr
     if (imageUrl && !recent.image_url) patch.image_url = imageUrl;
     if (screenshotUrl) patch.screenshot_url = screenshotUrl;
     if (itemName && !recent.item_name) patch.item_name = itemName;
+    // Keep the higher of the two source values — Dink rounds (e.g. 64.4M) while
+    // TrackScape sends exact coins; either may be higher depending on the item.
+    if (gpValue > recent.gp_value) patch.gp_value = gpValue;
     if (Object.keys(patch).length > 0) {
       const { error } = await supabase.from('drops').update(patch).eq('id', recent.id);
       if (error) console.error(`[recordDrop] backfill update failed for id ${recent.id}: ${error.message}`);
@@ -246,7 +249,10 @@ function parseLootItem(embed) {
 
   // Best source: "N x Item Name (value)" line in description (Loot Watch / Dink format)
   const itemMatch = desc.match(/\d+\s*x\s+(.+?)\s*\(/);
-  if (itemMatch) return itemMatch[1].trim().replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  if (itemMatch) {
+    const raw = itemMatch[1].trim();
+    return raw.startsWith('[') ? raw.replace(/^\[([^\]]+)\].*$/, '$1') : raw;
+  }
 
   // Fallback: title, but skip generic titles like "Loot Drop"
   const title = embed.title ?? '';
@@ -274,8 +280,11 @@ function parseLootItems(embed) {
     const m = line.trim().match(/^(\d+)\s*x\s+(.+)\s+\(([\d.,]+[KMBkmb]?)\)$/);
     if (!m) continue;
     const value = parseGpString(m[3]);
-    // Dink hyperlinks item names: [Item Name](url) → strip to plain text
-    const itemText = m[2].trim().replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    // Dink hyperlinks item names as [Item Name](url) — URLs can contain nested
+    // parens (e.g. Special:Search?search=Item_(variant)) which break [^)]+ patterns.
+    // Safest: extract only the text inside [...] if the name starts with a bracket.
+    const raw = m[2].trim();
+    const itemText = raw.startsWith('[') ? raw.replace(/^\[([^\]]+)\].*$/, '$1') : raw;
     if (value != null && value > 0) items.push({ item: itemText, gpValue: value });
   }
 
