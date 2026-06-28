@@ -126,10 +126,17 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   }
 }
 
-const confirmButtons = new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('botw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
-  new ButtonBuilder().setCustomId('botw_reroll').setLabel('🔄 Reroll').setStyle(ButtonStyle.Secondary),
-);
+const REROLL_THRESHOLD = 5;
+
+function buildButtons(votes = 0) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('botw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('botw_reroll')
+      .setLabel(votes > 0 ? `🔄 Reroll (${votes}/${REROLL_THRESHOLD})` : '🔄 Reroll')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -148,6 +155,7 @@ module.exports = {
       if (BOSS_PAIRS[b]) recentSet.add(BOSS_PAIRS[b]);
     }
     const sessionRejected = new Set();
+    const rerollVoters = new Set();
 
     const { startsAt, endsAt } = nextBotwWindow();
     const windowStr = `${formatCt(startsAt)} → ${formatCt(endsAt)}`;
@@ -163,7 +171,7 @@ module.exports = {
     let rolled = pool[Math.floor(Math.random() * pool.length)];
     const recentNames = history.slice(-HISTORY_SIZE).map(b => DISPLAY[b] ?? b);
 
-    const buildEmbed = (boss) => new EmbedBuilder()
+    const buildEmbed = (boss, votes = 0) => new EmbedBuilder()
       .setTitle('💀 Boss of the Week')
       .setColor(0xe74c3c)
       .setDescription(`## ${DISPLAY[boss] ?? boss}`)
@@ -171,23 +179,40 @@ module.exports = {
         { name: 'Competition window', value: windowStr },
         { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
       )
-      .setFooter({ text: 'Accept to lock in • Reroll to pick again • Times out in 5 min' })
+      .setFooter({ text: `Mods: Accept to lock in | Anyone: ${REROLL_THRESHOLD} votes to reroll • Times out in 5 min` })
       .setTimestamp();
+
+    function doReroll() {
+      sessionRejected.add(rolled);
+      if (BOSS_PAIRS[rolled]) sessionRejected.add(BOSS_PAIRS[rolled]);
+      let next = buildPool();
+      if (next.length === 0) {
+        sessionRejected.clear();
+        next = buildPool();
+      }
+      rolled = next[Math.floor(Math.random() * next.length)];
+      rerollVoters.clear();
+    }
 
     const response = await interaction.reply({
       embeds: [buildEmbed(rolled)],
-      components: [confirmButtons],
+      components: [buildButtons()],
       fetchReply: true,
     });
 
+    // No user filter — anyone in the server can interact
     const collector = response.createMessageComponentCollector({
       componentType: ComponentType.Button,
       time: 5 * 60 * 1000,
-      filter: i => i.user.id === interaction.user.id,
     });
 
     collector.on('collect', async i => {
       if (i.customId === 'botw_accept') {
+        if (!i.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          await i.reply({ content: '❌ Only moderators can accept the roll.', ephemeral: true });
+          return;
+        }
+
         data.botwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
         saveData(guildId, data);
 
@@ -223,23 +248,32 @@ module.exports = {
           finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
         }
 
-        if (pair) {
-          finalEmbed.setDescription(`## ${bossLabel}`);
-        }
+        if (pair) finalEmbed.setDescription(`## ${bossLabel}`);
 
         await i.update({ embeds: [finalEmbed], components: [] });
         collector.stop('accepted');
 
       } else if (i.customId === 'botw_reroll') {
-        sessionRejected.add(rolled);
-        if (BOSS_PAIRS[rolled]) sessionRejected.add(BOSS_PAIRS[rolled]);
-        let next = buildPool();
-        if (next.length === 0) {
-          sessionRejected.clear();
-          next = buildPool();
+        // Mod invoker gets an instant reroll; everyone else casts a vote
+        if (i.user.id === interaction.user.id) {
+          doReroll();
+          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
+          return;
         }
-        rolled = next[Math.floor(Math.random() * next.length)];
-        await i.update({ embeds: [buildEmbed(rolled)], components: [confirmButtons] });
+
+        if (rerollVoters.has(i.user.id)) {
+          await i.reply({ content: '⚠️ You already voted to reroll.', ephemeral: true });
+          return;
+        }
+
+        rerollVoters.add(i.user.id);
+
+        if (rerollVoters.size >= REROLL_THRESHOLD) {
+          doReroll();
+          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
+        } else {
+          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons(rerollVoters.size)] });
+        }
       }
     });
 
