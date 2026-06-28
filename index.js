@@ -513,6 +513,7 @@ async function retroParseGuild(guildId) {
     const messages = await fetchMessagesAfter(planksChannelId, afterSnowflake);
     let inserted = 0;
     for (const msg of messages) {
+      if (!msg.webhookId) continue;
       const name = parseDeathMessage(msg);
       if (name) {
         await recordDeath(guildId, name, msg.id, parseDeathImage(msg));

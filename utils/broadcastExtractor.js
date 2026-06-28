@@ -1,5 +1,5 @@
 // Ported from fatfingers23/trackscape-discord-bot osrs_broadcast_extractor.rs
-const RAID_DROP        = /^(?<player_name>.+?) received special loot from a raid: (?<item>.+?)([.]|$)/;
+const RAID_DROP        = /^(?<player_name>.+?) received special loot from a raid: (?<item>.+?)(?: \((?<value>[,\d]+) coins\))?[.]?$/;
 const ITEM_DROP        = /^(?<player_name>.+?) received a drop: (?:(?<quantity>[,\d]+) x )?(?<item>.+?)(?: \((?<value>[,\d]+) coins\))?(?: from .+?)?[.]?$/;
 const CLUE_ITEM        = /^(?<player_name>.+?) received a clue item: (?<item>.+?)(?: \((?<value>[,\d]+) coins\))?[.]?$/;
 const PET_DROP         = /^(?<player_name>.+?) (?:has a funny feeling.*?|feels something weird sneaking into (?:her|his) backpack): (?<pet_name>.+?) at (?<count>[,\d]+) (?<count_type>.+?)[.]$/;
@@ -35,7 +35,7 @@ function extractBroadcast(rawMessage) {
   let m;
 
   m = message.match(RAID_DROP);
-  if (m) return { type: 'RaidDrop', player: m.groups.player_name, item: m.groups.item };
+  if (m) return { type: 'RaidDrop', player: m.groups.player_name, item: m.groups.item, value: parseGp(m.groups.value) };
 
   m = message.match(PET_DROP);
   if (m) return { type: 'PetDrop', player: m.groups.player_name, pet: m.groups.pet_name, count: m.groups.count, countType: m.groups.count_type };

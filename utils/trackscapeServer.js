@@ -4,6 +4,7 @@ const { WebSocketServer } = require('ws');
 const { EmbedBuilder } = require('discord.js');
 const { findGuildByCode } = require('./trackscapeStorage');
 const { extractBroadcast, stripTags } = require('./broadcastExtractor');
+const { recordDrop } = require('./dropStorage');
 
 // verificationCode → Set<WebSocket>
 const rooms = new Map();
@@ -28,7 +29,7 @@ function buildBroadcastEmbed(broadcast) {
   switch (broadcast.type) {
     case 'RaidDrop':
       return e.setTitle('🏆 Raid Drop')
-        .setDescription(`**${broadcast.player}** received **${broadcast.item}** from a raid!`)
+        .setDescription(`**${broadcast.player}** received **${broadcast.item}**${broadcast.value ? ` (${broadcast.value.toLocaleString()} coins)` : ''} from a raid!`)
         .setColor(0xFFD700);
     case 'ItemDrop':
       return e.setTitle('💰 Drop')
@@ -127,7 +128,12 @@ function startTrackscapeServer(discordClient, port = 3000) {
         if (isLeague) embed.setFooter({ text: 'Leagues' });
         try {
           const channel = await discordClient.channels.fetch(guild.broadcastChannelId);
-          if (channel) await channel.send({ embeds: [embed] });
+          if (channel) {
+            const sentMsg = await channel.send({ embeds: [embed] });
+            if ((broadcast.type === 'RaidDrop' || broadcast.type === 'ItemDrop') && broadcast.value > 0) {
+              await recordDrop(guild.guildId, broadcast.player, broadcast.value, broadcast.item, null, null, sentMsg.id, 0);
+            }
+          }
         } catch (err) {
           console.error(`[trackscape] Broadcast send failed for guild ${guild.guildId}: ${err.message}`);
         }
