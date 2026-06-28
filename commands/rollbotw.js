@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
 const { loadData, saveData } = require('../utils/storage');
 
 const BOTW_BOSSES = [
@@ -56,7 +56,6 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   const groupId = process.env.WOM_GROUP_ID;
   const verificationCode = process.env.WOM_GROUP_VERIFICATION_CODE;
   if (!groupId || !verificationCode) return null;
-
   try {
     const res = await fetch('https://api.wiseoldman.net/v2/competitions', {
       method: 'POST',
@@ -69,6 +68,11 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
     return null;
   }
 }
+
+const buttons = new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('botw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
+  new ButtonBuilder().setCustomId('botw_reroll').setLabel('🔄 Reroll').setStyle(ButtonStyle.Secondary),
+);
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -87,53 +91,89 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guildId;
     const data = loadData(guildId);
-
-    const history = data.botwHistory ?? [];
-    const recentSet = new Set(history.slice(-HISTORY_SIZE));
-
-    let available = BOTW_BOSSES.filter(b => !recentSet.has(b));
-    if (available.length === 0) {
-      data.botwHistory = [];
-      available = [...BOTW_BOSSES];
-    }
-
-    const rolled = available[Math.floor(Math.random() * available.length)];
-    data.botwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
-    saveData(guildId, data);
-
-    const recentNames = history.slice(-HISTORY_SIZE).map(b => DISPLAY[b] ?? b);
-
     const startsRaw = interaction.options.getString('starts');
     const endsRaw = interaction.options.getString('ends');
 
-    const embed = new EmbedBuilder()
-      .setTitle('💀 Boss of the Week')
-      .setColor(0xe74c3c)
-      .setDescription(`## ${DISPLAY[rolled] ?? rolled}`)
-      .addFields({
-        name: 'Recent picks (excluded)',
-        value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet',
-      })
-      .setTimestamp();
+    const history = data.botwHistory ?? [];
+    const recentSet = new Set(history.slice(-HISTORY_SIZE));
+    const sessionRejected = new Set();
 
-    if (startsRaw && endsRaw) {
-      const startsAt = new Date(`${startsRaw}T00:00:00Z`).toISOString();
-      const endsAt = new Date(`${endsRaw}T23:59:59Z`).toISOString();
-      const title = `Boss of the Week — ${DISPLAY[rolled] ?? rolled}`;
+    const buildPool = () => BOTW_BOSSES.filter(b => !recentSet.has(b) && !sessionRejected.has(b));
 
-      const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
-      if (comp?.id) {
-        embed.addFields({
-          name: '🏆 WOM Competition',
-          value: `[${title}](https://wiseoldman.net/competitions/${comp.id})`,
-        });
-      } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
-        embed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check dates or WOM API.' });
-      } else {
-        embed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
-      }
+    let pool = buildPool();
+    if (pool.length === 0) {
+      data.botwHistory = [];
+      pool = [...BOTW_BOSSES];
     }
 
-    return interaction.reply({ embeds: [embed] });
+    let rolled = pool[Math.floor(Math.random() * pool.length)];
+    const recentNames = history.slice(-HISTORY_SIZE).map(b => DISPLAY[b] ?? b);
+
+    const buildEmbed = (boss) => new EmbedBuilder()
+      .setTitle('💀 Boss of the Week')
+      .setColor(0xe74c3c)
+      .setDescription(`## ${DISPLAY[boss] ?? boss}`)
+      .addFields({ name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' })
+      .setFooter({ text: 'Accept to lock in • Reroll to pick again • Times out in 5 min' })
+      .setTimestamp();
+
+    const response = await interaction.reply({
+      embeds: [buildEmbed(rolled)],
+      components: [buttons],
+      fetchReply: true,
+    });
+
+    const collector = response.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      time: 5 * 60 * 1000,
+      filter: i => i.user.id === interaction.user.id,
+    });
+
+    collector.on('collect', async i => {
+      if (i.customId === 'botw_accept') {
+        data.botwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
+        saveData(guildId, data);
+
+        const finalEmbed = new EmbedBuilder()
+          .setTitle('💀 Boss of the Week — Locked In')
+          .setColor(0xe74c3c)
+          .setDescription(`## ${DISPLAY[rolled] ?? rolled}`)
+          .addFields({ name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' })
+          .setTimestamp();
+
+        if (startsRaw && endsRaw) {
+          const startsAt = new Date(`${startsRaw}T00:00:00Z`).toISOString();
+          const endsAt = new Date(`${endsRaw}T23:59:59Z`).toISOString();
+          const title = `Boss of the Week — ${DISPLAY[rolled] ?? rolled}`;
+          const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
+          if (comp?.id) {
+            finalEmbed.addFields({ name: '🏆 WOM Competition', value: `[${title}](https://wiseoldman.net/competitions/${comp.id})` });
+          } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
+            finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check dates or WOM API.' });
+          } else {
+            finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
+          }
+        }
+
+        await i.update({ embeds: [finalEmbed], components: [] });
+        collector.stop('accepted');
+
+      } else if (i.customId === 'botw_reroll') {
+        sessionRejected.add(rolled);
+        let next = buildPool();
+        if (next.length === 0) {
+          sessionRejected.clear();
+          next = buildPool();
+        }
+        rolled = next[Math.floor(Math.random() * next.length)];
+        await i.update({ embeds: [buildEmbed(rolled)], components: [buttons] });
+      }
+    });
+
+    collector.on('end', (_, reason) => {
+      if (reason !== 'accepted') {
+        interaction.editReply({ components: [] }).catch(() => {});
+      }
+    });
   },
 };
