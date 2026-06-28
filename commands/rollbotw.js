@@ -52,6 +52,55 @@ const DISPLAY = {
 
 const HISTORY_SIZE = 5;
 
+// Convert a CT wall-clock date+time to a UTC Date.
+// Works correctly for both CDT (UTC-5) and CST (UTC-6) by asking Intl what
+// offset is actually in effect for that moment.
+function ctToUtc(year, month, day, hour, minute = 0) {
+  // Build a pseudo-UTC date using the CT values so we can probe the offset
+  const pseudo = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+  // Intl tells us what CT wall-clock time corresponds to pseudo (server is UTC)
+  const ctRendered = new Date(pseudo.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  // diff = how far pseudo drifted from actual CT wall-clock
+  const diff = pseudo - ctRendered;
+  return new Date(pseudo.getTime() + diff);
+}
+
+// Returns the UTC ISO strings for the next BOTW window:
+// Monday 1:00 PM CT → following Monday 12:00 PM CT.
+// If today is Monday, today is used as the start.
+function nextBotwWindow() {
+  const now = new Date();
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+  }).formatToParts(now).reduce((a, { type, value }) => ({ ...a, [type]: value }), {});
+
+  const DAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const daysUntilMonday = (1 - DAYS[parts.weekday] + 7) % 7;
+
+  // Build CT calendar date for the Monday
+  const mondayCt = new Date(Date.UTC(parseInt(parts.year), parseInt(parts.month) - 1, parseInt(parts.day)));
+  mondayCt.setUTCDate(mondayCt.getUTCDate() + daysUntilMonday);
+
+  const y1 = mondayCt.getUTCFullYear(), m1 = mondayCt.getUTCMonth() + 1, d1 = mondayCt.getUTCDate();
+  const endCt = new Date(mondayCt);
+  endCt.setUTCDate(endCt.getUTCDate() + 7);
+  const y2 = endCt.getUTCFullYear(), m2 = endCt.getUTCMonth() + 1, d2 = endCt.getUTCDate();
+
+  const startsAt = ctToUtc(y1, m1, d1, 13, 0);
+  const endsAt   = ctToUtc(y2, m2, d2, 12, 0);
+  return { startsAt, endsAt };
+}
+
+function formatCt(date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }).format(date);
+}
+
 async function createWomCompetition(metric, startsAt, endsAt, title) {
   const groupId = process.env.WOM_GROUP_ID;
   const verificationCode = process.env.WOM_GROUP_VERIFICATION_CODE;
@@ -60,7 +109,7 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
     const res = await fetch('https://api.wiseoldman.net/v2/competitions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'torta-clan-bot' },
-      body: JSON.stringify({ title, metric, startsAt, endsAt, groupId: parseInt(groupId), groupVerificationCode: verificationCode }),
+      body: JSON.stringify({ title, metric, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), groupId: parseInt(groupId), groupVerificationCode: verificationCode }),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -69,7 +118,7 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   }
 }
 
-const buttons = new ActionRowBuilder().addComponents(
+const confirmButtons = new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('botw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
   new ButtonBuilder().setCustomId('botw_reroll').setLabel('🔄 Reroll').setStyle(ButtonStyle.Secondary),
 );
@@ -77,26 +126,19 @@ const buttons = new ActionRowBuilder().addComponents(
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('rollbotw')
-    .setDescription('Randomly select a Boss of the Week — excludes the last 5 picks')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(opt => opt
-      .setName('starts')
-      .setDescription('Competition start date (YYYY-MM-DD) — required to auto-create on WOM')
-    )
-    .addStringOption(opt => opt
-      .setName('ends')
-      .setDescription('Competition end date (YYYY-MM-DD) — required to auto-create on WOM')
-    ),
+    .setDescription('Randomly select a Boss of the Week — Mon 1pm CT to next Mon 12pm CT')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
     const guildId = interaction.guildId;
     const data = loadData(guildId);
-    const startsRaw = interaction.options.getString('starts');
-    const endsRaw = interaction.options.getString('ends');
 
     const history = data.botwHistory ?? [];
     const recentSet = new Set(history.slice(-HISTORY_SIZE));
     const sessionRejected = new Set();
+
+    const { startsAt, endsAt } = nextBotwWindow();
+    const windowStr = `${formatCt(startsAt)} → ${formatCt(endsAt)}`;
 
     const buildPool = () => BOTW_BOSSES.filter(b => !recentSet.has(b) && !sessionRejected.has(b));
 
@@ -113,13 +155,16 @@ module.exports = {
       .setTitle('💀 Boss of the Week')
       .setColor(0xe74c3c)
       .setDescription(`## ${DISPLAY[boss] ?? boss}`)
-      .addFields({ name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' })
+      .addFields(
+        { name: 'Competition window', value: windowStr },
+        { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+      )
       .setFooter({ text: 'Accept to lock in • Reroll to pick again • Times out in 5 min' })
       .setTimestamp();
 
     const response = await interaction.reply({
       embeds: [buildEmbed(rolled)],
-      components: [buttons],
+      components: [confirmButtons],
       fetchReply: true,
     });
 
@@ -138,21 +183,20 @@ module.exports = {
           .setTitle('💀 Boss of the Week — Locked In')
           .setColor(0xe74c3c)
           .setDescription(`## ${DISPLAY[rolled] ?? rolled}`)
-          .addFields({ name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' })
+          .addFields(
+            { name: 'Competition window', value: windowStr },
+            { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+          )
           .setTimestamp();
 
-        if (startsRaw && endsRaw) {
-          const startsAt = new Date(`${startsRaw}T00:00:00Z`).toISOString();
-          const endsAt = new Date(`${endsRaw}T23:59:59Z`).toISOString();
-          const title = `Boss of the Week — ${DISPLAY[rolled] ?? rolled}`;
-          const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
-          if (comp?.id) {
-            finalEmbed.addFields({ name: '🏆 WOM Competition', value: `[${title}](https://wiseoldman.net/competitions/${comp.id})` });
-          } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
-            finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check dates or WOM API.' });
-          } else {
-            finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
-          }
+        const title = `Boss of the Week — ${DISPLAY[rolled] ?? rolled}`;
+        const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
+        if (comp?.id) {
+          finalEmbed.addFields({ name: '🏆 WOM Competition', value: `[${title}](https://wiseoldman.net/competitions/${comp.id})` });
+        } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
+          finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
+        } else {
+          finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
         }
 
         await i.update({ embeds: [finalEmbed], components: [] });
@@ -166,7 +210,7 @@ module.exports = {
           next = buildPool();
         }
         rolled = next[Math.floor(Math.random() * next.length)];
-        await i.update({ embeds: [buildEmbed(rolled)], components: [buttons] });
+        await i.update({ embeds: [buildEmbed(rolled)], components: [confirmButtons] });
       }
     });
 
