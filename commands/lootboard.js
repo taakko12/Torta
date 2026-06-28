@@ -3,9 +3,10 @@ const {
   getDropsChannelId, setDropsChannel,
   getMonthlyLeaderboard, getAlltimeLeaderboard,
   recordDrop, resetMonthlyDrops, getPlayerStats,
-  getNameChangeMap, resolveNameFromMap,
+  getNameChangeMap, resolveNameFromMap, normalizeName,
   parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem,
 } = require('../utils/dropStorage');
+const supabase = require('../utils/supabase');
 const { loadTrackscape } = require('../utils/trackscapeStorage');
 const { currentMonth } = require('../utils/plankStorage');
 
@@ -132,6 +133,20 @@ module.exports = {
     .addSubcommand(sub => sub
       .setName('reset')
       .setDescription('Manually reset the monthly loot leaderboard')
+    )
+    .addSubcommand(sub => sub
+      .setName('backfillimages')
+      .setDescription('Copy Dink screenshot URLs onto TrackScape records that are missing images')
+      .addStringOption(opt => opt
+        .setName('period')
+        .setDescription('How far back to scan (default: all time)')
+        .addChoices(
+          { name: 'Last 24 hours', value: '1d' },
+          { name: 'Last 7 days',   value: '7d' },
+          { name: 'Last 30 days',  value: '30d' },
+          { name: 'All time',      value: 'all' },
+        )
+      )
     ),
 
   async execute(interaction) {
@@ -347,6 +362,102 @@ module.exports = {
         content: `✅ Scrape complete (${periodLabel}) — **${counted} drops** (${broadcastCounted} from broadcasts), **${formatGp(total)}**, **${playerCount} players**. Duplicates skipped automatically.`,
         files: [attachment],
       });
+    }
+
+    if (sub === 'backfillimages') {
+      const channelId = await getDropsChannelId(guildId);
+      if (!channelId) {
+        return interaction.reply({ content: '❌ No loot channel set. Run `/lootboard setchannel` first.', flags: 64 });
+      }
+
+      await interaction.deferReply({ flags: 64 });
+
+      const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
+      if (!channel) return interaction.editReply('❌ Loot channel not found.');
+
+      const period = interaction.options.getString('period') ?? 'all';
+      let afterSnowflake = null;
+      if (period !== 'all') {
+        const days = parseInt(period);
+        afterSnowflake = dateToSnowflake(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
+      }
+
+      await interaction.editReply(`⏳ Scanning #loot-watch for Dink screenshots (${period === 'all' ? 'all time' : `last ${period}`})...`);
+
+      const [nameMap, messages] = await Promise.all([
+        getNameChangeMap(guildId),
+        fetchAllMessages(channel, afterSnowflake),
+      ]);
+      const resolve = name => resolveNameFromMap(nameMap, name);
+
+      let patched = 0;
+      let deleted = 0;
+      let noMatch = 0;
+
+      for (const msg of messages) {
+        if (!msg.webhookId && !msg.author?.bot) continue;
+        let embedIdx = 0;
+        for (const embed of msg.embeds ?? []) {
+          if (!isLootEmbed(embed)) { embedIdx++; continue; }
+
+          const screenshotUrl = parseLootScreenshot(embed, msg);
+          const imageUrl = parseLootImage(embed);
+          if (!screenshotUrl && !imageUrl) { embedIdx++; noMatch++; continue; }
+
+          const rawName = parseLootPlayer(embed, msg.content);
+          const gp = parseLootEmbed(embed);
+          const itemName = parseLootItem(embed);
+          if (!rawName || !gp) { embedIdx++; continue; }
+
+          const name = normalizeName(resolve(rawName));
+
+          // Find a TrackScape record for this player+item that has no screenshot.
+          // Try item name first, fall back to gp_value.
+          let target = null;
+          const baseQ = () => supabase
+            .from('drops')
+            .select('id')
+            .eq('guild_id', guildId)
+            .eq('player_name', name)
+            .is('screenshot_url', null)
+            .neq('discord_message_id', msg.id) // exclude this Dink message itself
+            .order('id', { ascending: true })
+            .limit(1);
+
+          if (itemName) {
+            const { data } = await baseQ().ilike('item_name', itemName).maybeSingle();
+            target = data;
+          }
+          if (!target) {
+            const { data } = await baseQ().eq('gp_value', gp).maybeSingle();
+            target = data;
+          }
+
+          if (target) {
+            // Backfill image onto the TrackScape record
+            const patch = {};
+            if (screenshotUrl) patch.screenshot_url = screenshotUrl;
+            if (imageUrl) patch.image_url = imageUrl;
+            await supabase.from('drops').update(patch).eq('id', target.id);
+            patched++;
+
+            // Delete the now-redundant Dink record to prevent double-counting
+            await supabase.from('drops')
+              .delete()
+              .eq('guild_id', guildId)
+              .eq('discord_message_id', msg.id)
+              .eq('embed_index', embedIdx);
+            deleted++;
+          } else {
+            noMatch++;
+          }
+          embedIdx++;
+        }
+      }
+
+      return interaction.editReply(
+        `✅ Backfill complete — **${patched} records** updated with Dink screenshots, **${deleted} duplicates** removed, **${noMatch}** Dink messages had no matching imageless record.`
+      );
     }
   }
 };

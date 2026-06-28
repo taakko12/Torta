@@ -278,6 +278,7 @@ function parseLootPlayer(embed, content) {
 }
 
 module.exports = {
+  normalizeName,
   getDropsChannelId,
   setDropsChannel,
   recordDrop,
