@@ -136,11 +136,21 @@ function parseLootEmbed(embed) {
 }
 
 function parseLootItem(embed) {
+  const desc = embed.description ?? '';
+
+  // Best source: "N x Item Name (value)" line in description (Loot Watch / Dink format)
+  const itemMatch = desc.match(/\d+\s*x\s+(.+?)\s*\(/);
+  if (itemMatch) return itemMatch[1].trim();
+
+  // Fallback: title, but skip generic titles like "Loot Drop"
   const title = embed.title ?? '';
   if (title) {
-    return title.replace(/^(valuable\s+drop|loot|drop)\s*:\s*/i, '').trim() || title.trim();
+    const stripped = title.replace(/^(valuable\s+drop|loot\s+drop|loot|drop)\s*:?\s*/i, '').trim();
+    if (stripped && !/^(drop|loot)$/i.test(stripped)) return stripped;
   }
-  const firstLine = (embed.description ?? '').split('\n')[0];
+
+  // Last resort: first description line
+  const firstLine = desc.split('\n')[0];
   return firstLine.replace(/\([\d.,]+[KMBkmb]?\)/g, '').replace(/has looted/i, '').trim() || 'Unknown item';
 }
 
