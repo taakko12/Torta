@@ -60,7 +60,7 @@ for (const file of commandFiles) {
 
 client.once('clientReady', () => {
   console.log(`[bot] Logged in as ${client.user.tag} (${client.commands.size} commands loaded)`);
-  startTrackscapeServer(client, parseInt(process.env.TRACKSCAPE_PORT) || 3000);
+  startTrackscapeServer(client, parseInt(process.env.PORT) || parseInt(process.env.TRACKSCAPE_PORT) || 3000);
   startReminderLoop();
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)

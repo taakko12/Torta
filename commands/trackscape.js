@@ -44,8 +44,14 @@ module.exports = {
 
       await saveTrackscape(guildId, config);
 
-      const port = process.env.TRACKSCAPE_PORT || 3000;
-      const host = process.env.TRACKSCAPE_HOST || `your-server-ip:${port}`;
+      // TRACKSCAPE_PUBLIC_URL = full https URL (e.g. Railway). Falls back to raw host:port for local.
+      const base = (process.env.TRACKSCAPE_PUBLIC_URL || '').replace(/\/$/, '');
+      const httpUrl = base
+        ? `${base}/api/chat/new-clan-chat`
+        : `http://${process.env.TRACKSCAPE_HOST || `your-server-ip:${process.env.TRACKSCAPE_PORT || 3000}`}/api/chat/new-clan-chat`;
+      const wsUrl = base
+        ? `${base.replace(/^https/, 'wss').replace(/^http/, 'ws')}/api/chat/ws`
+        : `ws://${process.env.TRACKSCAPE_HOST || `your-server-ip:${process.env.TRACKSCAPE_PORT || 3000}`}/api/chat/ws`;
 
       const embed = new EmbedBuilder()
         .setTitle('TrackScape Setup')
@@ -55,8 +61,8 @@ module.exports = {
           { name: 'Broadcasts Channel', value: config.broadcastChannelId ? `<#${config.broadcastChannelId}>` : 'Not set', inline: true },
           { name: '​', value: '​', inline: false },
           { name: 'Verification Code', value: `\`${config.verificationCode}\``, inline: false },
-          { name: 'HTTP Endpoint (for RuneLite plugin)', value: `\`http://${host}/api/chat/new-clan-chat\``, inline: false },
-          { name: 'WebSocket Endpoint (for RuneLite plugin)', value: `\`ws://${host}/api/chat/ws\``, inline: false },
+          { name: 'HTTP Endpoint (for RuneLite plugin)', value: `\`${httpUrl}\``, inline: false },
+          { name: 'WebSocket Endpoint (for RuneLite plugin)', value: `\`${wsUrl}\``, inline: false },
         )
         .setDescription('In RuneLite, open **TrackScape Connector → Advanced Settings**, paste in both URLs above, then enter the verification code in the **Verification Code** field.')
         .setTimestamp();
