@@ -6,7 +6,7 @@ const { loadRaids, updateRaid } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
 const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
-const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootImage, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
+const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
 const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./utils/welcomeStorage');
 const { startTrackscapeServer } = require('./utils/trackscapeServer');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
@@ -354,7 +354,7 @@ client.on('messageCreate', async message => {
       const playerName = parseLootPlayer(embed, message.content);
       const gpValue = parseLootEmbed(embed);
       if (playerName && gpValue > 0) {
-        await recordDrop(guildId, playerName, gpValue, parseLootItem(embed), parseLootImage(embed), message.id, i);
+        await recordDrop(guildId, playerName, gpValue, parseLootItem(embed), parseLootImage(embed), parseLootScreenshot(embed, message), message.id, i);
         console.log(`[loot] Recorded ${gpValue.toLocaleString()} gp for "${playerName}" in guild ${guildId}`);
       }
     }
@@ -522,7 +522,7 @@ async function retroParseGuild(guildId) {
         const name = parseLootPlayer(embed, msg.content);
         const gp = parseLootEmbed(embed);
         if (name && gp > 0) {
-          await recordDrop(guildId, name, gp, parseLootItem(embed), parseLootImage(embed), msg.id, i);
+          await recordDrop(guildId, name, gp, parseLootItem(embed), parseLootImage(embed), parseLootScreenshot(embed, msg), msg.id, i);
           inserted++;
         }
       }

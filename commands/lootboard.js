@@ -3,7 +3,7 @@ const {
   getDropsChannelId, setDropsChannel,
   getMonthlyLeaderboard, getAlltimeLeaderboard,
   recordDrop, resetMonthlyDrops,
-  parseLootEmbed, parseLootImage, parseLootPlayer, parseLootItem,
+  parseLootEmbed, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem,
 } = require('../utils/dropStorage');
 const { currentMonth } = require('../utils/plankStorage');
 
@@ -147,7 +147,7 @@ module.exports = {
             if (name && gp > 0) {
               const key = name.toLowerCase();
               totals[key] = (totals[key] ?? 0) + gp;
-              dropRows.push({ ts: msg.createdAt, name, item: parseLootItem(embed), imageUrl: parseLootImage(embed), gp, messageId: msg.id, embedIdx });
+              dropRows.push({ ts: msg.createdAt, name, item: parseLootItem(embed), imageUrl: parseLootImage(embed), screenshotUrl: parseLootScreenshot(embed, msg), gp, messageId: msg.id, embedIdx });
               counted++;
             }
           }
@@ -157,7 +157,7 @@ module.exports = {
 
       // Insert into DB — dedup index silently skips any already-recorded messages
       for (const row of dropRows) {
-        await recordDrop(guildId, row.name, row.gp, row.item, row.imageUrl, row.messageId, row.embedIdx);
+        await recordDrop(guildId, row.name, row.gp, row.item, row.imageUrl, row.screenshotUrl, row.messageId, row.embedIdx);
       }
 
       const total = Object.values(totals).reduce((a, b) => a + b, 0);

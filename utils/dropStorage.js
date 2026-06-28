@@ -20,26 +20,29 @@ async function setDropsChannel(guildId, channelId) {
 
 // ── Write ────────────────────────────────────────────────────────────────────
 
-async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, messageId = null, embedIndex = 0) {
+async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0) {
   const { error } = await supabase.from('drops').insert({
     guild_id: guildId,
     player_name: playerName.toLowerCase(),
     gp_value: gpValue,
     item_name: itemName,
     image_url: imageUrl,
+    screenshot_url: screenshotUrl,
     discord_message_id: messageId,
     embed_index: embedIndex ?? 0,
   });
   if (error) {
     if (error.code !== '23505') throw error;
-    // Row already exists — backfill image_url if we now have one and it was missing
-    if (imageUrl && messageId != null) {
+    // Backfill any image columns that were missing on the existing row
+    if (messageId != null && (imageUrl || screenshotUrl)) {
+      const patch = {};
+      if (imageUrl) patch.image_url = imageUrl;
+      if (screenshotUrl) patch.screenshot_url = screenshotUrl;
       await supabase.from('drops')
-        .update({ image_url: imageUrl })
+        .update(patch)
         .eq('guild_id', guildId)
         .eq('discord_message_id', messageId)
-        .eq('embed_index', embedIndex ?? 0)
-        .is('image_url', null);
+        .eq('embed_index', embedIndex ?? 0);
     }
   }
 }
@@ -61,7 +64,7 @@ async function getAlltimeLeaderboard(guildId) {
 async function getMostRecentDrop(guildId) {
   const { data } = await supabase
     .from('drops')
-    .select('player_name, gp_value, item_name, image_url, recorded_at')
+    .select('player_name, gp_value, item_name, image_url, screenshot_url, recorded_at')
     .eq('guild_id', guildId)
     .order('recorded_at', { ascending: false })
     .limit(1)
@@ -142,7 +145,12 @@ function parseLootItem(embed) {
 }
 
 function parseLootImage(embed) {
-  return embed.thumbnail?.url ?? embed.image?.url ?? null;
+  return embed.thumbnail?.url ?? null; // OSRS wiki item sprite
+}
+
+function parseLootScreenshot(embed, message = null) {
+  if (embed.image?.url) return embed.image.url;
+  return message?.attachments?.first()?.url ?? null;
 }
 
 function parseLootPlayer(embed, content) {
@@ -172,6 +180,7 @@ module.exports = {
   parseGpString,
   parseLootEmbed,
   parseLootImage,
+  parseLootScreenshot,
   parseLootItem,
   parseLootPlayer,
 };
