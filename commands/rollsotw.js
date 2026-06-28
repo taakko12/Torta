@@ -16,7 +16,7 @@ const DISPLAY = {
 };
 
 const HISTORY_SIZE = 5;
-const REROLL_THRESHOLD = 5;
+const OPTION_LABELS = ['1️⃣', '2️⃣', '3️⃣'];
 
 function ctToUtc(year, month, day, hour, minute = 0) {
   const pseudo = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
@@ -27,7 +27,6 @@ function ctToUtc(year, month, day, hour, minute = 0) {
 
 function nextSotwWindow() {
   const now = new Date();
-
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Chicago',
     year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
@@ -44,9 +43,7 @@ function nextSotwWindow() {
   endCt.setUTCDate(endCt.getUTCDate() + 7);
   const y2 = endCt.getUTCFullYear(), m2 = endCt.getUTCMonth() + 1, d2 = endCt.getUTCDate();
 
-  const startsAt = ctToUtc(y1, m1, d1, 13, 0);
-  const endsAt   = ctToUtc(y2, m2, d2, 12, 0);
-  return { startsAt, endsAt };
+  return { startsAt: ctToUtc(y1, m1, d1, 13, 0), endsAt: ctToUtc(y2, m2, d2, 12, 0) };
 }
 
 function formatCt(date) {
@@ -85,20 +82,25 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   }
 }
 
-function buildButtons(votes = 0) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('sotw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId('sotw_reroll')
-      .setLabel(votes > 0 ? `🔄 Reroll (${votes}/${REROLL_THRESHOLD})` : '🔄 Reroll')
-      .setStyle(ButtonStyle.Secondary),
+function buildComponents(candidates, voteCounts) {
+  const voteRow = new ActionRowBuilder().addComponents(
+    candidates.map((c, i) => new ButtonBuilder()
+      .setCustomId(`sotw_vote_${i}`)
+      .setLabel(`${OPTION_LABELS[i]} ${DISPLAY[c] ?? c} (${voteCounts[i].size})`)
+      .setStyle(ButtonStyle.Primary)
+    )
   );
+  const controlRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('sotw_accept').setLabel('✅ Accept Winner').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('sotw_reroll').setLabel('🔄 Reroll Options').setStyle(ButtonStyle.Secondary),
+  );
+  return [voteRow, controlRow];
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('rollsotw')
-    .setDescription('Randomly select a Skill of the Week — Mon 1pm CT to next Mon 12pm CT')
+    .setDescription('Roll 3 Skill of the Week options — community votes, auto-locks 10 min before start')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
@@ -108,116 +110,139 @@ module.exports = {
     const history = data.sotwHistory ?? [];
     const recentSet = new Set(history.slice(-HISTORY_SIZE));
     const sessionRejected = new Set();
-    const rerollVoters = new Set();
 
     const { startsAt, endsAt } = nextSotwWindow();
     const windowStr = `${formatCt(startsAt)} → ${formatCt(endsAt)}`;
+    const votingCutoff = new Date(startsAt.getTime() - 10 * 60 * 1000);
+    const cutoffUnix = Math.floor(votingCutoff.getTime() / 1000);
+    const timeUntilCutoff = Math.max(60_000, votingCutoff.getTime() - Date.now());
+
+    const recentNames = history.slice(-HISTORY_SIZE).map(s => DISPLAY[s] ?? s);
 
     const buildPool = () => SOTW_SKILLS.filter(s => !recentSet.has(s) && !sessionRejected.has(s));
 
-    let pool = buildPool();
-    if (pool.length === 0) {
-      data.sotwHistory = [];
-      pool = [...SOTW_SKILLS];
+    function rollCandidates() {
+      let pool = buildPool();
+      if (pool.length < 3) { sessionRejected.clear(); pool = buildPool(); }
+      const result = [];
+      const remaining = [...pool];
+      while (result.length < 3 && remaining.length > 0) {
+        const idx = Math.floor(Math.random() * remaining.length);
+        result.push(remaining.splice(idx, 1)[0]);
+      }
+      return result;
     }
 
-    let rolled = pool[Math.floor(Math.random() * pool.length)];
-    const recentNames = history.slice(-HISTORY_SIZE).map(s => DISPLAY[s] ?? s);
-
-    const buildEmbed = (skill, votes = 0) => new EmbedBuilder()
-      .setTitle('📈 Skill of the Week')
-      .setColor(0x57f287)
-      .setDescription(`## ${DISPLAY[skill] ?? skill}`)
-      .addFields(
-        { name: 'Competition window', value: windowStr },
-        { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
-      )
-      .setFooter({ text: `Mods: Accept to lock in | Anyone: ${REROLL_THRESHOLD} votes to reroll • Times out in 5 min` })
-      .setTimestamp();
-
-    function doReroll() {
-      sessionRejected.add(rolled);
-      let next = buildPool();
-      if (next.length === 0) {
-        sessionRejected.clear();
-        next = buildPool();
+    function getWinner(candidates, voteCounts) {
+      let winIdx = 0;
+      for (let i = 1; i < candidates.length; i++) {
+        if (voteCounts[i].size > voteCounts[winIdx].size) winIdx = i;
       }
-      rolled = next[Math.floor(Math.random() * next.length)];
-      rerollVoters.clear();
+      return candidates[winIdx];
+    }
+
+    let candidates = rollCandidates();
+    let voteCounts = [new Set(), new Set(), new Set()];
+    const userVote = new Map();
+
+    const buildEmbed = () => {
+      const optionLines = candidates.map((c, i) => {
+        const n = voteCounts[i].size;
+        return `${OPTION_LABELS[i]} **${DISPLAY[c] ?? c}** — ${n} vote${n !== 1 ? 's' : ''}`;
+      }).join('\n');
+      return new EmbedBuilder()
+        .setTitle('📈 Skill of the Week')
+        .setColor(0x57f287)
+        .setDescription(optionLines)
+        .addFields(
+          { name: 'Competition window', value: windowStr },
+          { name: 'Voting closes', value: `<t:${cutoffUnix}:f> (<t:${cutoffUnix}:R>)` },
+          { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+        )
+        .setFooter({ text: 'Vote for your pick | Mods: Accept Winner or Reroll for new options' })
+        .setTimestamp();
+    };
+
+    async function lockIn(winner, autoClose = false) {
+      data.sotwHistory = [...history, winner].slice(-HISTORY_SIZE * 2);
+      saveData(guildId, data);
+
+      const title = `Skill of the Week — ${DISPLAY[winner] ?? winner}`;
+      const comp = await createWomCompetition(winner, startsAt, endsAt, title);
+
+      const finalEmbed = new EmbedBuilder()
+        .setTitle(`📈 Skill of the Week — Locked In${autoClose ? ' (Auto)' : ''}`)
+        .setColor(0x57f287)
+        .setDescription(`## ${DISPLAY[winner] ?? winner}`)
+        .addFields(
+          { name: 'Competition window', value: windowStr },
+          { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+        )
+        .setTimestamp();
+
+      if (comp?.id) {
+        finalEmbed.addFields({ name: '🏆 WOM Competition', value: `[${title}](https://wiseoldman.net/competitions/${comp.id})` });
+      } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
+        finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
+      } else {
+        finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
+      }
+
+      return finalEmbed;
     }
 
     const response = await interaction.reply({
-      embeds: [buildEmbed(rolled)],
-      components: [buildButtons()],
+      embeds: [buildEmbed()],
+      components: buildComponents(candidates, voteCounts),
       fetchReply: true,
     });
 
     const collector = response.createMessageComponentCollector({
       componentType: ComponentType.Button,
-      time: 5 * 60 * 1000,
+      time: timeUntilCutoff,
     });
 
     collector.on('collect', async i => {
-      if (i.customId === 'sotw_accept') {
+      if (i.customId.startsWith('sotw_vote_')) {
+        const idx = parseInt(i.customId.slice(-1));
+        if (isNaN(idx) || idx >= candidates.length) return;
+
+        const prev = userVote.get(i.user.id);
+        if (prev !== undefined) voteCounts[prev].delete(i.user.id);
+        userVote.set(i.user.id, idx);
+        voteCounts[idx].add(i.user.id);
+
+        await i.update({ embeds: [buildEmbed()], components: buildComponents(candidates, voteCounts) });
+
+      } else if (i.customId === 'sotw_accept') {
         if (!i.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-          await i.reply({ content: '❌ Only moderators can accept the roll.', ephemeral: true });
+          await i.reply({ content: '❌ Only moderators can accept.', ephemeral: true });
           return;
         }
-
-        data.sotwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
-        saveData(guildId, data);
-
-        const title = `Skill of the Week — ${DISPLAY[rolled] ?? rolled}`;
-        const finalEmbed = new EmbedBuilder()
-          .setTitle('📈 Skill of the Week — Locked In')
-          .setColor(0x57f287)
-          .setDescription(`## ${DISPLAY[rolled] ?? rolled}`)
-          .addFields(
-            { name: 'Competition window', value: windowStr },
-            { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
-          )
-          .setTimestamp();
-
-        const comp = await createWomCompetition(rolled, startsAt, endsAt, title);
-        if (comp?.id) {
-          finalEmbed.addFields({
-            name: '🏆 WOM Competition',
-            value: `[${title}](https://wiseoldman.net/competitions/${comp.id})`,
-          });
-        } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
-          finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
-        } else {
-          finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
-        }
-
+        const winner = getWinner(candidates, voteCounts);
+        const finalEmbed = await lockIn(winner);
         await i.update({ embeds: [finalEmbed], components: [] });
         collector.stop('accepted');
 
       } else if (i.customId === 'sotw_reroll') {
-        if (i.user.id === interaction.user.id) {
-          doReroll();
-          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
+        if (!i.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          await i.reply({ content: '❌ Only moderators can reroll.', ephemeral: true });
           return;
         }
-
-        if (rerollVoters.has(i.user.id)) {
-          await i.reply({ content: '⚠️ You already voted to reroll.', ephemeral: true });
-          return;
-        }
-
-        rerollVoters.add(i.user.id);
-
-        if (rerollVoters.size >= REROLL_THRESHOLD) {
-          doReroll();
-          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
-        } else {
-          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons(rerollVoters.size)] });
-        }
+        for (const c of candidates) sessionRejected.add(c);
+        candidates = rollCandidates();
+        voteCounts = [new Set(), new Set(), new Set()];
+        userVote.clear();
+        await i.update({ embeds: [buildEmbed()], components: buildComponents(candidates, voteCounts) });
       }
     });
 
-    collector.on('end', (_, reason) => {
-      if (reason !== 'accepted') {
+    collector.on('end', async (_, reason) => {
+      if (reason === 'time') {
+        const winner = getWinner(candidates, voteCounts);
+        const finalEmbed = await lockIn(winner, true);
+        await interaction.editReply({ embeds: [finalEmbed], components: [] }).catch(() => {});
+      } else if (reason !== 'accepted') {
         interaction.editReply({ components: [] }).catch(() => {});
       }
     });

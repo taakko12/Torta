@@ -25,7 +25,7 @@ const DISPLAY = {
   amoxliatl: 'Amoxliatl', araxxor: 'Araxxor', artio: 'Artio',
   barrows_chests: 'Barrows', bryophyta: 'Bryophyta',
   callisto: 'Callisto', calvarion: "Calvar'ion", cerberus: 'Cerberus',
-  chambers_of_xeric: 'Chambers of Xeric', chambers_of_xeric_challenge_mode: 'Chambers of Xeric (CM)',
+  chambers_of_xeric: 'Chambers of Xeric', chambers_of_xeric_challenge_mode: 'CoX (CM)',
   chaos_elemental: 'Chaos Elemental', chaos_fanatic: 'Chaos Fanatic',
   commander_zilyana: 'Commander Zilyana', corporeal_beast: 'Corporeal Beast',
   crazy_archaeologist: 'Crazy Archaeologist',
@@ -40,11 +40,11 @@ const DISPLAY = {
   sarachnis: 'Sarachnis', scorpia: 'Scorpia', scurrius: 'Scurrius',
   skotizo: 'Skotizo', sol_heredit: 'Sol Heredit', spindel: 'Spindel',
   tempoross: 'Tempoross', the_gauntlet: 'The Gauntlet',
-  the_corrupted_gauntlet: 'The Corrupted Gauntlet', the_hueycoatl: 'The Hueycoatl',
+  the_corrupted_gauntlet: 'Corrupted Gauntlet', the_hueycoatl: 'The Hueycoatl',
   the_leviathan: 'The Leviathan', the_whisperer: 'The Whisperer',
-  theatre_of_blood: 'Theatre of Blood', theatre_of_blood_hard_mode: 'Theatre of Blood (HM)',
+  theatre_of_blood: 'Theatre of Blood', theatre_of_blood_hard_mode: 'ToB (HM)',
   thermonuclear_smoke_devil: 'Thermonuclear Smoke Devil',
-  tombs_of_amascut: 'Tombs of Amascut', tombs_of_amascut_expert_mode: 'Tombs of Amascut (Expert)',
+  tombs_of_amascut: 'Tombs of Amascut', tombs_of_amascut_expert_mode: 'ToA (Expert)',
   tzkal_zuk: 'TzKal-Zuk', tztok_jad: 'TzTok-Jad',
   vardorvis: 'Vardorvis', venenatis: 'Venenatis', vetion: "Vet'ion",
   vorkath: 'Vorkath', wintertodt: 'Wintertodt', zalcano: 'Zalcano', zulrah: 'Zulrah',
@@ -52,33 +52,23 @@ const DISPLAY = {
 
 const HISTORY_SIZE = 5;
 
-// Wilderness bosses and their singles-area variants share the same content —
-// rolling one should block the other for the same window.
 const BOSS_PAIRS = {
   callisto: 'artio',   artio: 'callisto',
   venenatis: 'spindel', spindel: 'venenatis',
   vetion: 'calvarion', calvarion: 'vetion',
 };
 
-// Convert a CT wall-clock date+time to a UTC Date.
-// Works correctly for both CDT (UTC-5) and CST (UTC-6) by asking Intl what
-// offset is actually in effect for that moment.
+const OPTION_LABELS = ['1️⃣', '2️⃣', '3️⃣'];
+
 function ctToUtc(year, month, day, hour, minute = 0) {
-  // Build a pseudo-UTC date using the CT values so we can probe the offset
   const pseudo = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
-  // Intl tells us what CT wall-clock time corresponds to pseudo (server is UTC)
   const ctRendered = new Date(pseudo.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-  // diff = how far pseudo drifted from actual CT wall-clock
   const diff = pseudo - ctRendered;
   return new Date(pseudo.getTime() + diff);
 }
 
-// Returns the UTC ISO strings for the next BOTW window:
-// Monday 1:00 PM CT → following Monday 12:00 PM CT.
-// If today is Monday, today is used as the start.
 function nextBotwWindow() {
   const now = new Date();
-
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Chicago',
     year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
@@ -87,7 +77,6 @@ function nextBotwWindow() {
   const DAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   const daysUntilMonday = (1 - DAYS[parts.weekday] + 7) % 7;
 
-  // Build CT calendar date for the Monday
   const mondayCt = new Date(Date.UTC(parseInt(parts.year), parseInt(parts.month) - 1, parseInt(parts.day)));
   mondayCt.setUTCDate(mondayCt.getUTCDate() + daysUntilMonday);
 
@@ -96,9 +85,7 @@ function nextBotwWindow() {
   endCt.setUTCDate(endCt.getUTCDate() + 7);
   const y2 = endCt.getUTCFullYear(), m2 = endCt.getUTCMonth() + 1, d2 = endCt.getUTCDate();
 
-  const startsAt = ctToUtc(y1, m1, d1, 13, 0);
-  const endsAt   = ctToUtc(y2, m2, d2, 12, 0);
-  return { startsAt, endsAt };
+  return { startsAt: ctToUtc(y1, m1, d1, 13, 0), endsAt: ctToUtc(y2, m2, d2, 12, 0) };
 }
 
 function formatCt(date) {
@@ -112,7 +99,11 @@ function formatCt(date) {
 async function createWomCompetition(metric, startsAt, endsAt, title) {
   const groupId = process.env.WOM_GROUP_ID;
   const verificationCode = process.env.WOM_GROUP_VERIFICATION_CODE;
-  if (!groupId || !verificationCode) return null;
+  if (!groupId || !verificationCode) {
+    console.error(`[rollbotw] Missing env vars — WOM_GROUP_ID: ${groupId ? 'set' : 'MISSING'}, WOM_GROUP_VERIFICATION_CODE: ${verificationCode ? 'set' : 'MISSING'}`);
+    return null;
+  }
+  console.log(`[rollbotw] Creating WOM competition: metric=${metric} groupId=${groupId} starts=${startsAt.toISOString()}`);
   try {
     const body = { title, metric, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), groupId: parseInt(groupId), groupVerificationCode: verificationCode };
     const res = await fetch('https://api.wiseoldman.net/v2/competitions', {
@@ -133,22 +124,25 @@ async function createWomCompetition(metric, startsAt, endsAt, title) {
   }
 }
 
-const REROLL_THRESHOLD = 5;
-
-function buildButtons(votes = 0) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('botw_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId('botw_reroll')
-      .setLabel(votes > 0 ? `🔄 Reroll (${votes}/${REROLL_THRESHOLD})` : '🔄 Reroll')
-      .setStyle(ButtonStyle.Secondary),
+function buildComponents(candidates, voteCounts) {
+  const voteRow = new ActionRowBuilder().addComponents(
+    candidates.map((c, i) => new ButtonBuilder()
+      .setCustomId(`botw_vote_${i}`)
+      .setLabel(`${OPTION_LABELS[i]} ${DISPLAY[c] ?? c} (${voteCounts[i].size})`)
+      .setStyle(ButtonStyle.Primary)
+    )
   );
+  const controlRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('botw_accept').setLabel('✅ Accept Winner').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('botw_reroll').setLabel('🔄 Reroll Options').setStyle(ButtonStyle.Secondary),
+  );
+  return [voteRow, controlRow];
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('rollbotw')
-    .setDescription('Randomly select a Boss of the Week — Mon 1pm CT to next Mon 12pm CT')
+    .setDescription('Roll 3 Boss of the Week options — community votes, auto-locks 10 min before start')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
@@ -162,130 +156,158 @@ module.exports = {
       if (BOSS_PAIRS[b]) recentSet.add(BOSS_PAIRS[b]);
     }
     const sessionRejected = new Set();
-    const rerollVoters = new Set();
 
     const { startsAt, endsAt } = nextBotwWindow();
     const windowStr = `${formatCt(startsAt)} → ${formatCt(endsAt)}`;
+    const votingCutoff = new Date(startsAt.getTime() - 10 * 60 * 1000);
+    const cutoffUnix = Math.floor(votingCutoff.getTime() / 1000);
+    const timeUntilCutoff = Math.max(60_000, votingCutoff.getTime() - Date.now());
+
+    const recentNames = history.slice(-HISTORY_SIZE).map(b => DISPLAY[b] ?? b);
 
     const buildPool = () => BOTW_BOSSES.filter(b => !recentSet.has(b) && !sessionRejected.has(b));
 
-    let pool = buildPool();
-    if (pool.length === 0) {
-      data.botwHistory = [];
-      pool = [...BOTW_BOSSES];
+    function rollCandidates() {
+      let pool = buildPool();
+      if (pool.length < 3) { sessionRejected.clear(); pool = buildPool(); }
+      const result = [];
+      const usedAndPairs = new Set();
+      const remaining = [...pool];
+      while (result.length < 3 && remaining.length > 0) {
+        const idx = Math.floor(Math.random() * remaining.length);
+        const pick = remaining.splice(idx, 1)[0];
+        if (usedAndPairs.has(pick)) continue;
+        result.push(pick);
+        usedAndPairs.add(pick);
+        if (BOSS_PAIRS[pick]) usedAndPairs.add(BOSS_PAIRS[pick]);
+      }
+      return result;
     }
 
-    let rolled = pool[Math.floor(Math.random() * pool.length)];
-    const recentNames = history.slice(-HISTORY_SIZE).map(b => DISPLAY[b] ?? b);
-
-    const buildEmbed = (boss, votes = 0) => new EmbedBuilder()
-      .setTitle('💀 Boss of the Week')
-      .setColor(0xe74c3c)
-      .setDescription(`## ${DISPLAY[boss] ?? boss}`)
-      .addFields(
-        { name: 'Competition window', value: windowStr },
-        { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
-      )
-      .setFooter({ text: `Mods: Accept to lock in | Anyone: ${REROLL_THRESHOLD} votes to reroll • Times out in 5 min` })
-      .setTimestamp();
-
-    function doReroll() {
-      sessionRejected.add(rolled);
-      if (BOSS_PAIRS[rolled]) sessionRejected.add(BOSS_PAIRS[rolled]);
-      let next = buildPool();
-      if (next.length === 0) {
-        sessionRejected.clear();
-        next = buildPool();
+    function getWinner(candidates, voteCounts) {
+      let winIdx = 0;
+      for (let i = 1; i < candidates.length; i++) {
+        if (voteCounts[i].size > voteCounts[winIdx].size) winIdx = i;
       }
-      rolled = next[Math.floor(Math.random() * next.length)];
-      rerollVoters.clear();
+      return candidates[winIdx];
+    }
+
+    let candidates = rollCandidates();
+    let voteCounts = [new Set(), new Set(), new Set()];
+    const userVote = new Map();
+
+    const buildEmbed = () => {
+      const optionLines = candidates.map((c, i) => {
+        const n = voteCounts[i].size;
+        return `${OPTION_LABELS[i]} **${DISPLAY[c] ?? c}** — ${n} vote${n !== 1 ? 's' : ''}`;
+      }).join('\n');
+      return new EmbedBuilder()
+        .setTitle('💀 Boss of the Week')
+        .setColor(0xe74c3c)
+        .setDescription(optionLines)
+        .addFields(
+          { name: 'Competition window', value: windowStr },
+          { name: 'Voting closes', value: `<t:${cutoffUnix}:f> (<t:${cutoffUnix}:R>)` },
+          { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+        )
+        .setFooter({ text: 'Vote for your pick | Mods: Accept Winner or Reroll for new options' })
+        .setTimestamp();
+    };
+
+    async function lockIn(winner, autoClose = false) {
+      data.botwHistory = [...history, winner].slice(-HISTORY_SIZE * 2);
+      saveData(guildId, data);
+
+      const pair = BOSS_PAIRS[winner];
+      const title = `Boss of the Week — ${DISPLAY[winner] ?? winner}`;
+      const pairTitle = pair ? `Boss of the Week — ${DISPLAY[pair] ?? pair}` : null;
+      const bossLabel = pair ? `${DISPLAY[winner] ?? winner} + ${DISPLAY[pair] ?? pair}` : (DISPLAY[winner] ?? winner);
+
+      const [comp, pairComp] = await Promise.all([
+        createWomCompetition(winner, startsAt, endsAt, title),
+        pair ? createWomCompetition(pair, startsAt, endsAt, pairTitle) : Promise.resolve(null),
+      ]);
+
+      const finalEmbed = new EmbedBuilder()
+        .setTitle(`💀 Boss of the Week — Locked In${autoClose ? ' (Auto)' : ''}`)
+        .setColor(0xe74c3c)
+        .setDescription(`## ${bossLabel}`)
+        .addFields(
+          { name: 'Competition window', value: windowStr },
+          { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
+        )
+        .setTimestamp();
+
+      if (comp?.id || pairComp?.id) {
+        const links = [
+          comp?.id ? `[${DISPLAY[winner] ?? winner}](https://wiseoldman.net/competitions/${comp.id})` : null,
+          pairComp?.id ? `[${DISPLAY[pair] ?? pair}](https://wiseoldman.net/competitions/${pairComp.id})` : null,
+        ].filter(Boolean).join(' + ');
+        finalEmbed.addFields({ name: '🏆 WOM Competitions', value: links });
+      } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
+        finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
+      } else {
+        finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
+      }
+
+      return finalEmbed;
     }
 
     const response = await interaction.reply({
-      embeds: [buildEmbed(rolled)],
-      components: [buildButtons()],
+      embeds: [buildEmbed()],
+      components: buildComponents(candidates, voteCounts),
       fetchReply: true,
     });
 
-    // No user filter — anyone in the server can interact
     const collector = response.createMessageComponentCollector({
       componentType: ComponentType.Button,
-      time: 5 * 60 * 1000,
+      time: timeUntilCutoff,
     });
 
     collector.on('collect', async i => {
-      if (i.customId === 'botw_accept') {
+      if (i.customId.startsWith('botw_vote_')) {
+        const idx = parseInt(i.customId.slice(-1));
+        if (isNaN(idx) || idx >= candidates.length) return;
+
+        const prev = userVote.get(i.user.id);
+        if (prev !== undefined) voteCounts[prev].delete(i.user.id);
+        userVote.set(i.user.id, idx);
+        voteCounts[idx].add(i.user.id);
+
+        await i.update({ embeds: [buildEmbed()], components: buildComponents(candidates, voteCounts) });
+
+      } else if (i.customId === 'botw_accept') {
         if (!i.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-          await i.reply({ content: '❌ Only moderators can accept the roll.', ephemeral: true });
+          await i.reply({ content: '❌ Only moderators can accept.', ephemeral: true });
           return;
         }
-
-        data.botwHistory = [...history, rolled].slice(-HISTORY_SIZE * 2);
-        saveData(guildId, data);
-
-        const finalEmbed = new EmbedBuilder()
-          .setTitle('💀 Boss of the Week — Locked In')
-          .setColor(0xe74c3c)
-          .setDescription(`## ${DISPLAY[rolled] ?? rolled}`)
-          .addFields(
-            { name: 'Competition window', value: windowStr },
-            { name: 'Recent picks (excluded)', value: recentNames.length > 0 ? recentNames.join(', ') : 'None yet' },
-          )
-          .setTimestamp();
-
-        const pair = BOSS_PAIRS[rolled];
-        const bossLabel = pair ? `${DISPLAY[rolled] ?? rolled} + ${DISPLAY[pair] ?? pair}` : (DISPLAY[rolled] ?? rolled);
-        const title = `Boss of the Week — ${DISPLAY[rolled] ?? rolled}`;
-        const pairTitle = pair ? `Boss of the Week — ${DISPLAY[pair] ?? pair}` : null;
-
-        const [comp, pairComp] = await Promise.all([
-          createWomCompetition(rolled, startsAt, endsAt, title),
-          pair ? createWomCompetition(pair, startsAt, endsAt, pairTitle) : Promise.resolve(null),
-        ]);
-
-        if (comp?.id || pairComp?.id) {
-          const links = [
-            comp?.id ? `[${DISPLAY[rolled] ?? rolled}](https://wiseoldman.net/competitions/${comp.id})` : null,
-            pairComp?.id ? `[${DISPLAY[pair] ?? pair}](https://wiseoldman.net/competitions/${pairComp.id})` : null,
-          ].filter(Boolean).join(' + ');
-          finalEmbed.addFields({ name: '🏆 WOM Competitions', value: links });
-        } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
-          finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
-        } else {
-          finalEmbed.addFields({ name: 'ℹ️ WOM', value: 'Add `WOM_GROUP_VERIFICATION_CODE` to Railway env to auto-create competitions.' });
-        }
-
-        if (pair) finalEmbed.setDescription(`## ${bossLabel}`);
-
+        const winner = getWinner(candidates, voteCounts);
+        const finalEmbed = await lockIn(winner);
         await i.update({ embeds: [finalEmbed], components: [] });
         collector.stop('accepted');
 
       } else if (i.customId === 'botw_reroll') {
-        // Mod invoker gets an instant reroll; everyone else casts a vote
-        if (i.user.id === interaction.user.id) {
-          doReroll();
-          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
+        if (!i.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          await i.reply({ content: '❌ Only moderators can reroll.', ephemeral: true });
           return;
         }
-
-        if (rerollVoters.has(i.user.id)) {
-          await i.reply({ content: '⚠️ You already voted to reroll.', ephemeral: true });
-          return;
+        for (const c of candidates) {
+          sessionRejected.add(c);
+          if (BOSS_PAIRS[c]) sessionRejected.add(BOSS_PAIRS[c]);
         }
-
-        rerollVoters.add(i.user.id);
-
-        if (rerollVoters.size >= REROLL_THRESHOLD) {
-          doReroll();
-          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons()] });
-        } else {
-          await i.update({ embeds: [buildEmbed(rolled)], components: [buildButtons(rerollVoters.size)] });
-        }
+        candidates = rollCandidates();
+        voteCounts = [new Set(), new Set(), new Set()];
+        userVote.clear();
+        await i.update({ embeds: [buildEmbed()], components: buildComponents(candidates, voteCounts) });
       }
     });
 
-    collector.on('end', (_, reason) => {
-      if (reason !== 'accepted') {
+    collector.on('end', async (_, reason) => {
+      if (reason === 'time') {
+        const winner = getWinner(candidates, voteCounts);
+        const finalEmbed = await lockIn(winner, true);
+        await interaction.editReply({ embeds: [finalEmbed], components: [] }).catch(() => {});
+      } else if (reason !== 'accepted') {
         interaction.editReply({ components: [] }).catch(() => {});
       }
     });
