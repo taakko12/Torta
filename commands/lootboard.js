@@ -86,16 +86,20 @@ module.exports = {
       const [year, month] = currentMonth().split('-');
       const monthName = new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
-      const fmt = (entries) => entries.length === 0
-        ? '▬▬▬▬▬▬▬▬▬\n*No loot recorded yet.*'
-        : '▬▬▬▬▬▬▬▬▬\n' + entries.slice(0, 10).map((e, i) => `${MEDALS[i] ?? `${i + 1}.`} **${e.name}** — ${formatGp(e.total)}`).join('\n');
+      const fmt = (label, entries) => {
+        const rows = entries.length === 0
+          ? '*No loot recorded yet.*'
+          : entries.slice(0, 10).map((e, i) => `${MEDALS[i] ?? `${i + 1}.`} **${e.name}** — ${formatGp(e.total)}`).join('\n');
+        return `▬▬▬▬▬▬▬▬▬\n${label}\n${rows}`;
+      };
 
       const embed = new EmbedBuilder()
         .setTitle('💰 Loot Leaderboard')
         .setColor(0xf1c40f)
-        .addFields(
-          { name: `📅 ${monthName}`, value: fmt(monthlyEntries), inline: false },
-          { name: '🏆 All Time', value: fmt(alltimeEntries), inline: false },
+        .setDescription(
+          fmt(`📅 ${monthName}`, monthlyEntries) +
+          '\n\n' +
+          fmt('🏆 All Time', alltimeEntries)
         )
         .setTimestamp();
       return interaction.reply({ embeds: [embed] });
