@@ -52,6 +52,14 @@ const DISPLAY = {
 
 const HISTORY_SIZE = 5;
 
+// Wilderness bosses and their singles-area variants share the same content —
+// rolling one should block the other for the same window.
+const BOSS_PAIRS = {
+  callisto: 'artio',   artio: 'callisto',
+  venenatis: 'spindel', spindel: 'venenatis',
+  vetion: 'calvarion', calvarion: 'vetion',
+};
+
 // Convert a CT wall-clock date+time to a UTC Date.
 // Works correctly for both CDT (UTC-5) and CST (UTC-6) by asking Intl what
 // offset is actually in effect for that moment.
@@ -134,7 +142,11 @@ module.exports = {
     const data = loadData(guildId);
 
     const history = data.botwHistory ?? [];
-    const recentSet = new Set(history.slice(-HISTORY_SIZE));
+    const recentSet = new Set();
+    for (const b of history.slice(-HISTORY_SIZE)) {
+      recentSet.add(b);
+      if (BOSS_PAIRS[b]) recentSet.add(BOSS_PAIRS[b]);
+    }
     const sessionRejected = new Set();
 
     const { startsAt, endsAt } = nextBotwWindow();
@@ -204,6 +216,7 @@ module.exports = {
 
       } else if (i.customId === 'botw_reroll') {
         sessionRejected.add(rolled);
+        if (BOSS_PAIRS[rolled]) sessionRejected.add(BOSS_PAIRS[rolled]);
         let next = buildPool();
         if (next.length === 0) {
           sessionRejected.clear();
