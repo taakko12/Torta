@@ -74,7 +74,7 @@ client.once('clientReady', () => {
       if (!ann || Date.now() < ann.scheduledAt) continue;
       try {
         const ch = await client.channels.fetch(ann.channelId);
-        await ch.send(ann.content);
+        await ch.send({ embeds: [new EmbedBuilder().setDescription(ann.content)] });
       } catch (err) {
         console.error(`[announce] Failed to post in guild ${guildId}: ${err.message}`);
       }

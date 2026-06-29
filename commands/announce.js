@@ -74,8 +74,8 @@ module.exports = {
       content = await res.text();
     }
 
-    if (content.length > 2000) {
-      const msg = { content: `❌ Content is ${content.length} characters — Discord caps messages at 2000. Trim it and try again.`, flags: 64 };
+    if (content.length > 4096) {
+      const msg = { content: `❌ Content is ${content.length} characters — embed descriptions cap at 4096. Trim it and try again.`, flags: 64 };
       return file ? interaction.editReply(msg) : interaction.reply(msg);
     }
 
