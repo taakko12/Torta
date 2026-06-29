@@ -70,21 +70,39 @@ const SOTW_DISPLAY = {
   slayer: 'Slayer', smithing: 'Smithing', thieving: 'Thieving', woodcutting: 'Woodcutting',
 };
 
-const BOSS_PAIRS = {
-  callisto: 'artio',    artio: 'callisto',
-  venenatis: 'spindel', spindel: 'venenatis',
-  vetion: 'calvarion',  calvarion: 'vetion',
+// Maps each metric to its group partners (array). Supports both pairs and trios.
+// Partners are excluded from appearing alongside each other in the same poll,
+// and all get their own WOM competition when any member of the group wins.
+const BOSS_PARTNERS = {
+  callisto: ['artio'],    artio: ['callisto'],
+  venenatis: ['spindel'], spindel: ['venenatis'],
+  vetion: ['calvarion'],  calvarion: ['vetion'],
   // Raid normal ↔ challenge/hard/expert modes
-  chambers_of_xeric: 'chambers_of_xeric_challenge_mode', chambers_of_xeric_challenge_mode: 'chambers_of_xeric',
-  theatre_of_blood: 'theatre_of_blood_hard_mode',         theatre_of_blood_hard_mode: 'theatre_of_blood',
-  tombs_of_amascut: 'tombs_of_amascut_expert_mode',       tombs_of_amascut_expert_mode: 'tombs_of_amascut',
-  the_gauntlet: 'the_corrupted_gauntlet',                 the_corrupted_gauntlet: 'the_gauntlet',
+  chambers_of_xeric: ['chambers_of_xeric_challenge_mode'], chambers_of_xeric_challenge_mode: ['chambers_of_xeric'],
+  theatre_of_blood: ['theatre_of_blood_hard_mode'],         theatre_of_blood_hard_mode: ['theatre_of_blood'],
+  tombs_of_amascut: ['tombs_of_amascut_expert_mode'],       tombs_of_amascut_expert_mode: ['tombs_of_amascut'],
+  the_gauntlet: ['the_corrupted_gauntlet'],                 the_corrupted_gauntlet: ['the_gauntlet'],
   // Group vs solo instance
-  nightmare: 'phosani_nightmare',                         phosani_nightmare: 'nightmare',
+  nightmare: ['phosani_nightmare'],                         phosani_nightmare: ['nightmare'],
   // Same thematic progression / always done together
-  tztok_jad: 'tzkal_zuk',                                 tzkal_zuk: 'tztok_jad',
-  crazy_archaeologist: 'deranged_archaeologist',           deranged_archaeologist: 'crazy_archaeologist',
+  tztok_jad: ['tzkal_zuk'],                                 tzkal_zuk: ['tztok_jad'],
+  crazy_archaeologist: ['deranged_archaeologist'],           deranged_archaeologist: ['crazy_archaeologist'],
+  // Dagannoth Kings trio — all three run simultaneously
+  dagannoth_prime:   ['dagannoth_rex', 'dagannoth_supreme'],
+  dagannoth_rex:     ['dagannoth_prime', 'dagannoth_supreme'],
+  dagannoth_supreme: ['dagannoth_prime', 'dagannoth_rex'],
 };
+
+// Collective display name overrides for groups larger than a pair
+const BOSS_GROUP_LABELS = {
+  dagannoth_prime:   'Dagannoth Kings',
+  dagannoth_rex:     'Dagannoth Kings',
+  dagannoth_supreme: 'Dagannoth Kings',
+};
+
+function getBossPartners(metric) {
+  return BOSS_PARTNERS[metric] ?? [];
+}
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
 
@@ -154,7 +172,7 @@ function rollCandidates(pollType, preRollHistory, sessionRejected, numCandidates
   const recentSet = new Set();
   for (const b of (preRollHistory ?? []).slice(-HISTORY_SIZE)) {
     recentSet.add(b);
-    if (pollType === 'botw' && BOSS_PAIRS[b]) recentSet.add(BOSS_PAIRS[b]);
+    if (pollType === 'botw') for (const p of getBossPartners(b)) recentSet.add(p);
   }
   const rejectedSet = new Set(sessionRejected ?? []);
 
@@ -172,7 +190,7 @@ function rollCandidates(pollType, preRollHistory, sessionRejected, numCandidates
     if (used.has(pick)) continue;
     result.push(pick);
     used.add(pick);
-    if (pollType === 'botw' && BOSS_PAIRS[pick]) used.add(BOSS_PAIRS[pick]);
+    if (pollType === 'botw') for (const p of getBossPartners(pick)) used.add(p);
   }
   return result;
 }
@@ -264,39 +282,42 @@ async function lockInPoll(poll, client, autoClose = false) {
 
   const winIdx = getWinnerIndex(user_votes, candidates.length);
   const winner = candidates[winIdx];
-  const displayWinner = getDisplay(poll_type, winner);
-  const pair = poll_type === 'botw' ? (BOSS_PAIRS[winner] ?? null) : null;
-  const displayPair = pair ? getDisplay('botw', pair) : null;
   const tag = `roll${poll_type}`;
-
-  const title1 = `${poll_type === 'botw' ? 'Boss' : 'Skill'} of the Week — ${displayWinner}`;
-  const title2 = pair ? `Boss of the Week — ${displayPair}` : null;
-
-  const [comp, pairComp] = await Promise.all([
-    createWomCompetition(winner, starts_at, ends_at, title1, tag),
-    pair ? createWomCompetition(pair, starts_at, ends_at, title2, tag) : Promise.resolve(null),
-  ]);
-
-  const emoji = poll_type === 'botw' ? '💀' : '📈';
   const noun = poll_type === 'botw' ? 'Boss' : 'Skill';
-  const bossLabel = pair ? `${displayWinner} + ${displayPair}` : displayWinner;
+  const emoji = poll_type === 'botw' ? '💀' : '📈';
+
+  // Build the full group: winner + all partners
+  const partners = poll_type === 'botw' ? getBossPartners(winner) : [];
+  const allMetrics = [winner, ...partners];
+  const groupLabel = BOSS_GROUP_LABELS[winner]
+    ?? allMetrics.map(m => getDisplay(poll_type, m)).join(' + ');
+
+  const comps = await Promise.all(
+    allMetrics.map(m => createWomCompetition(
+      m, starts_at, ends_at,
+      `${noun} of the Week — ${getDisplay(poll_type, m)}`,
+      tag,
+    ))
+  );
 
   const finalEmbed = new EmbedBuilder()
     .setTitle(`${emoji} ${noun} of the Week — Locked In${autoClose ? ' (Auto)' : ''}`)
     .setColor(poll_type === 'botw' ? 0xe74c3c : 0x57f287)
-    .setDescription(`## ${bossLabel}`)
+    .setDescription(`## ${groupLabel}`)
     .addFields(
       { name: 'Competition window', value: window_str },
       { name: 'Recent picks (excluded)', value: (recent_names ?? []).length > 0 ? recent_names.join(', ') : 'None yet' },
     )
     .setTimestamp();
 
-  if (comp?.id || pairComp?.id) {
-    const links = [
-      comp?.id ? `[${displayWinner}](https://wiseoldman.net/competitions/${comp.id})` : null,
-      pairComp?.id ? `[${displayPair}](https://wiseoldman.net/competitions/${pairComp.id})` : null,
-    ].filter(Boolean).join(' + ');
-    finalEmbed.addFields({ name: `🏆 WOM ${pair ? 'Competitions' : 'Competition'}`, value: links });
+  const compLinks = allMetrics
+    .map((m, i) => comps[i]?.id
+      ? `[${getDisplay(poll_type, m)}](https://wiseoldman.net/competitions/${comps[i].id})`
+      : null)
+    .filter(Boolean).join(' + ');
+
+  if (compLinks) {
+    finalEmbed.addFields({ name: `🏆 WOM ${comps.filter(Boolean).length > 1 ? 'Competitions' : 'Competition'}`, value: compLinks });
   } else if (process.env.WOM_GROUP_VERIFICATION_CODE) {
     finalEmbed.addFields({ name: '⚠️ WOM', value: 'Competition creation failed — check WOM API.' });
   } else {
@@ -322,7 +343,8 @@ async function lockInPoll(poll, client, autoClose = false) {
 }
 
 module.exports = {
-  BOTW_BOSSES, BOTW_DISPLAY, SOTW_SKILLS, SOTW_DISPLAY, BOSS_PAIRS,
+  BOTW_BOSSES, BOTW_DISPLAY, SOTW_SKILLS, SOTW_DISPLAY, BOSS_PARTNERS, BOSS_GROUP_LABELS,
+  getBossPartners,
   HISTORY_SIZE, OPTION_LABELS,
   nextCompWindow, formatCt,
   getDisplay, getVoteCounts, getWinnerIndex, rollCandidates,

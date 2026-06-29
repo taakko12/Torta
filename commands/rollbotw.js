@@ -1,7 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { loadData } = require('../utils/storage');
 const {
-  BOTW_DISPLAY, BOSS_PAIRS, HISTORY_SIZE,
+  BOTW_DISPLAY, HISTORY_SIZE, getBossPartners,
   nextCompWindow, rollCandidates, buildPollEmbed, buildPollComponents,
 } = require('../utils/pollHelpers');
 const { createPoll } = require('../utils/pollStorage');
@@ -32,7 +32,7 @@ module.exports = {
       channel_id: interaction.channelId,
       poll_type: 'botw',
       candidates,
-      session_rejected: candidates.flatMap(c => [c, BOSS_PAIRS[c]].filter(Boolean)),
+      session_rejected: candidates.flatMap(c => [c, ...getBossPartners(c)]),
       user_votes: {},
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),

@@ -12,7 +12,7 @@ const { startTrackscapeServer, sendToGame } = require('./utils/trackscapeServer'
 const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
-const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, BOSS_PAIRS } = require('./utils/pollHelpers');
+const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -318,7 +318,7 @@ client.on('interactionCreate', async interaction => {
           return interaction.reply({ content: '❌ Only moderators can reroll.', flags: 64 });
         }
         const newRejected = [...new Set([...poll.session_rejected, ...poll.candidates,
-          ...poll.candidates.map(c => BOSS_PAIRS[c]).filter(Boolean)])];
+          ...poll.candidates.flatMap(c => getBossPartners(c))])];
         const newCandidates = rollCandidates(poll.poll_type, poll.pre_roll_history, newRejected);
         await updatePoll(poll.id, { candidates: newCandidates, session_rejected: newRejected, user_votes: {} });
         const updated = { ...poll, candidates: newCandidates, session_rejected: newRejected, user_votes: {} };
