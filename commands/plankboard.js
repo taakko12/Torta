@@ -4,8 +4,7 @@ const {
   getMonthlyLeaderboard, resetMonthlyPlanks,
   currentMonth,
 } = require('../utils/plankStorage');
-
-const MEDALS = ['🥇', '🥈', '🥉'];
+const { MEDALS } = require('../utils/constants');
 
 module.exports = {
   data: new SlashCommandBuilder()

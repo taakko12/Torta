@@ -1,6 +1,5 @@
 const { EmbedBuilder } = require('discord.js');
-
-const MEDALS = ['🥇', '🥈', '🥉'];
+const { MEDALS } = require('./constants');
 
 // board = { users: { [userId]: { wins } } }
 // options = { title, color, emptyText }

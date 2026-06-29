@@ -9,8 +9,8 @@ const {
 const supabase = require('../utils/supabase');
 const { loadTrackscape } = require('../utils/trackscapeStorage');
 const { currentMonth } = require('../utils/plankStorage');
-
-const MEDALS = ['🥇', '🥈', '🥉'];
+const { MEDALS } = require('../utils/constants');
+const { isLootEmbed, dateToSnowflake } = require('../utils/messageHelper');
 
 function formatGp(value) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B gp`;
@@ -32,15 +32,6 @@ function buildLeaderboardEmbed(entries, title, color) {
     embed.setFooter({ text: `${entries.length} player${entries.length === 1 ? '' : 's'} recorded` });
   }
   return embed;
-}
-
-function isLootEmbed(embed) {
-  const text = `${embed.title ?? ''} ${embed.description ?? ''}`;
-  return /loot|looted|received a drop|drop:/i.test(text);
-}
-
-function dateToSnowflake(date) {
-  return ((BigInt(date.getTime()) - 1420070400000n) << 22n).toString();
 }
 
 async function fetchAllMessages(channel, afterSnowflake = null) {

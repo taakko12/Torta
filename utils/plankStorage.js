@@ -1,8 +1,5 @@
 const supabase = require('./supabase');
-
-function normalizeName(name) {
-  return name.replace(/\s+/gu, ' ').trim().toLowerCase();
-}
+const { normalizeName } = require('./dropStorage');
 
 // ── Channel config ───────────────────────────────────────────────────────────
 

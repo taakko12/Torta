@@ -13,22 +13,20 @@ const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
+const { isLootEmbed, dateToSnowflake } = require('./utils/messageHelper');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
   'F in chat',
   'another one for the plank board',
   'the wilderness always wins',
-  'rip the loot 😔',
-  'was it worth it? (no)',
-  'touched grass, died instantly',
+  'rip the loot',
+  'was it worth it?',
   'have you tried not dying?',
-  'the Iron Man in you has died',
-  'back to Lumbridge you go',
+  'back to Lumbridge noob',
   'your items are in a better place now',
   'estimated loot dropped: your dignity',
   'PKed or just bad? (both)',
-  'pour one out 🪣',
   'that one hurt to watch',
   'maybe try a safer spot next time',
   'bold strategy, did not pay off',
@@ -37,7 +35,9 @@ const DEATH_QUIPS = [
   'bosh, really good',
   '80% chance this was tru',
   'fuck you pearl',
-  '"dont you have like 1000 kc here? stop dying man"'
+  '"dont you have like 1000 kc here? stop dying man"',
+  'shoulda clicked the yellow pot, idiot',
+  'no surprise there'
 ];
 
 const client = new Client({

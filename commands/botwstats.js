@@ -1,8 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getCurrentBossCompetitions, getCompetitionStandings } = require('../utils/wom');
 const { humanize, formatNumber } = require('../utils/womEmbeds');
-
-const MEDALS = ['🥇', '🥈', '🥉'];
+const { MEDALS } = require('../utils/constants');
 
 // Merge participations from 1–2 competitions, summing KC per player.
 function mergeStandings(competitions) {
