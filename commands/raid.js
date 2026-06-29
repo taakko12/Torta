@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { loadRaids, createRaid } = require('../utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('../utils/raidEmbed');
 
@@ -23,10 +23,6 @@ module.exports = {
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'schedule') {
-      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
-      }
-
       const guildId = interaction.guildId;
       const name = interaction.options.getString('name');
       const timestamp = interaction.options.getInteger('timestamp');
