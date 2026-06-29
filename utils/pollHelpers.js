@@ -79,6 +79,11 @@ const BOSS_PAIRS = {
   theatre_of_blood: 'theatre_of_blood_hard_mode',         theatre_of_blood_hard_mode: 'theatre_of_blood',
   tombs_of_amascut: 'tombs_of_amascut_expert_mode',       tombs_of_amascut_expert_mode: 'tombs_of_amascut',
   the_gauntlet: 'the_corrupted_gauntlet',                 the_corrupted_gauntlet: 'the_gauntlet',
+  // Group vs solo instance
+  nightmare: 'phosani_nightmare',                         phosani_nightmare: 'nightmare',
+  // Same thematic progression / always done together
+  tztok_jad: 'tzkal_zuk',                                 tzkal_zuk: 'tztok_jad',
+  crazy_archaeologist: 'deranged_archaeologist',           deranged_archaeologist: 'crazy_archaeologist',
 };
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
