@@ -74,6 +74,11 @@ const BOSS_PAIRS = {
   callisto: 'artio',    artio: 'callisto',
   venenatis: 'spindel', spindel: 'venenatis',
   vetion: 'calvarion',  calvarion: 'vetion',
+  // Raid normal ↔ challenge/hard/expert modes
+  chambers_of_xeric: 'chambers_of_xeric_challenge_mode', chambers_of_xeric_challenge_mode: 'chambers_of_xeric',
+  theatre_of_blood: 'theatre_of_blood_hard_mode',         theatre_of_blood_hard_mode: 'theatre_of_blood',
+  tombs_of_amascut: 'tombs_of_amascut_expert_mode',       tombs_of_amascut_expert_mode: 'tombs_of_amascut',
+  the_gauntlet: 'the_corrupted_gauntlet',                 the_corrupted_gauntlet: 'the_gauntlet',
 };
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
