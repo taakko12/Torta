@@ -10,7 +10,7 @@ const supabase = require('../utils/supabase');
 const { loadTrackscape } = require('../utils/trackscapeStorage');
 const { currentMonth } = require('../utils/plankStorage');
 const { MEDALS } = require('../utils/constants');
-const { isLootEmbed, dateToSnowflake } = require('../utils/messageHelper');
+const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed } = require('../utils/messageHelper');
 
 function formatGp(value) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B gp`;
@@ -62,28 +62,6 @@ async function fetchAllMessages(channel, afterSnowflake = null) {
   return all;
 }
 
-function parseBroadcastDropEmbed(embed) {
-  const title = embed.title ?? '';
-  const desc = embed.description ?? '';
-  const parseVal = s => s ? parseInt(s.replace(/[,\s]/g, ''), 10) || null : null;
-
-  if (title.includes('Raid Drop')) {
-    const m = desc.match(/^\*\*(.+?)\*\* received \*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
-    if (!m) return null;
-    return { player: m[1], item: m[2], value: parseVal(m[3]) };
-  }
-  if (title === '💰 Drop') {
-    const m = desc.match(/^\*\*(.+?)\*\* received a drop: (?:\d+x )?\*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
-    if (!m) return null;
-    return { player: m[1], item: m[2], value: parseVal(m[3]) };
-  }
-  if (title.includes('Clue Item')) {
-    const m = desc.match(/^\*\*(.+?)\*\* received a clue item: \*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
-    if (!m) return null;
-    return { player: m[1], item: m[2], value: parseVal(m[3]) };
-  }
-  return null;
-}
 
 module.exports = {
   data: new SlashCommandBuilder()

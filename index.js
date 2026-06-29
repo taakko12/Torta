@@ -13,7 +13,7 @@ const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
-const { isLootEmbed, dateToSnowflake } = require('./utils/messageHelper');
+const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed } = require('./utils/messageHelper');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -382,6 +382,20 @@ client.on('messageCreate', async message => {
       const displayName = message.member?.displayName ?? message.author.username;
       sendToGame(tsConfig.verificationCode, displayName, message.content);
     }
+  }
+
+  // TrackScape posts broadcasts as a bot account (not a webhook) — handle before the webhook gate.
+  if (message.author?.bot && !message.webhookId) {
+    const tsConfig = await loadTrackscape(guildId);
+    if (tsConfig.broadcastChannelId && message.channelId === tsConfig.broadcastChannelId) {
+      for (let i = 0; i < (message.embeds ?? []).length; i++) {
+        const parsed = parseBroadcastDropEmbed(message.embeds[i]);
+        if (!parsed || !(parsed.value > 0)) continue;
+        await recordDrop(guildId, parsed.player, parsed.value, parsed.item, null, null, message.id, i);
+        console.log(`[broadcast] Recorded ${parsed.value.toLocaleString()} gp (${parsed.item}) for "${parsed.player}" in guild ${guildId}`);
+      }
+    }
+    return;
   }
 
   if (!message.webhookId) return;
