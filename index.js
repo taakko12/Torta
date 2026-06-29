@@ -1,7 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
 const { loadRaids, updateRaid } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
@@ -14,6 +14,7 @@ const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
 const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed } = require('./utils/messageHelper');
+const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -67,6 +68,19 @@ client.once('clientReady', () => {
   startReminderLoop();
   checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
   setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
+  setInterval(async () => {
+    for (const [guildId] of client.guilds.cache) {
+      const ann = loadAnnounce(guildId);
+      if (!ann || Date.now() < ann.scheduledAt) continue;
+      try {
+        const ch = await client.channels.fetch(ann.channelId);
+        await ch.send(ann.content);
+      } catch (err) {
+        console.error(`[announce] Failed to post in guild ${guildId}: ${err.message}`);
+      }
+      clearAnnounce(guildId);
+    }
+  }, 60_000);
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)
   ), 3000);
@@ -314,6 +328,18 @@ client.on('interactionCreate', async interaction => {
       }
 
       return;
+    }
+
+    if (action === 'announce_download') {
+      const ann = loadAnnounce(interaction.guildId);
+      if (!ann) return interaction.reply({ content: '❌ No announcement scheduled.', flags: 64 });
+      const buf = Buffer.from(ann.content, 'utf8');
+      return interaction.reply({ files: [new AttachmentBuilder(buf, { name: 'announcement.md' })], flags: 64 });
+    }
+
+    if (action === 'announce_cancel_btn') {
+      clearAnnounce(interaction.guildId);
+      return interaction.update({ content: '🗑️ Announcement cancelled.', embeds: [], components: [] });
     }
 
     if (action !== 'raid_signup' && action !== 'raid_dropout') return;
