@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { renamePlayer: renameDrops } = require('../utils/dropStorage');
+const { renamePlayer: renameDrops, saveNameChange } = require('../utils/dropStorage');
 const { renamePlayer: renamePlanks } = require('../utils/plankStorage');
 const { loadLoot, saveLoot } = require('../utils/lootStorage');
 
@@ -21,6 +21,8 @@ module.exports = {
     const newName = interaction.options.getString('newname').trim().toLowerCase();
 
     const changes = [];
+
+    await saveNameChange(guildId, oldName, newName);
 
     const dropCount = await renameDrops(guildId, oldName, newName);
     if (dropCount > 0) changes.push(`Loot: renamed **${dropCount}** drop record${dropCount === 1 ? '' : 's'} to **${newName}**`);

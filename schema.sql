@@ -5,10 +5,22 @@
 
 -- Guild configuration (replaces channelId fields scattered across JSON files)
 CREATE TABLE IF NOT EXISTS guild_config (
-  guild_id           text PRIMARY KEY,
-  drops_channel_id   text,
-  planks_channel_id  text
+  guild_id              text PRIMARY KEY,
+  drops_channel_id      text,
+  planks_channel_id     text,
+  trackscape_code       text UNIQUE,
+  clanchat_channel_id   text,
+  broadcast_channel_id  text
 );
+
+-- If the table already exists, add the TrackScape columns
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS trackscape_code      text UNIQUE;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS clanchat_channel_id  text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS broadcast_channel_id text;
+
+-- If name_changes doesn't exist yet, the CREATE TABLE IF NOT EXISTS above handles it.
+-- If you added it manually without changed_at, run:
+-- ALTER TABLE name_changes ADD COLUMN IF NOT EXISTS changed_at timestamptz DEFAULT now();
 
 -- Individual drop (loot) events — one row per embed processed
 CREATE TABLE IF NOT EXISTS drops (
@@ -23,6 +35,9 @@ CREATE TABLE IF NOT EXISTS drops (
 );
 
 -- Prevents a message embed from being counted twice if processed more than once
+ALTER TABLE drops ADD COLUMN IF NOT EXISTS image_url      text;
+ALTER TABLE drops ADD COLUMN IF NOT EXISTS screenshot_url text;
+
 CREATE UNIQUE INDEX IF NOT EXISTS drops_message_dedup
   ON drops (guild_id, discord_message_id, embed_index)
   WHERE discord_message_id IS NOT NULL;
@@ -44,6 +59,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS planks_message_dedup
 
 CREATE INDEX IF NOT EXISTS planks_guild_time ON planks (guild_id, recorded_at DESC);
 
+-- Name change history — maps old RSNs to current name for scrape integrity
+CREATE TABLE IF NOT EXISTS name_changes (
+  guild_id   text NOT NULL,
+  old_name   text NOT NULL,
+  new_name   text NOT NULL,
+  changed_at timestamptz DEFAULT now(),
+  PRIMARY KEY (guild_id, old_name)
+);
+
+-- Active polls — persisted so Railway redeploys don't lose voting state
+-- Run this if the table doesn't exist yet:
+CREATE TABLE IF NOT EXISTS active_polls (
+  id               uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  guild_id         text NOT NULL,
+  channel_id       text NOT NULL,
+  message_id       text UNIQUE NOT NULL,
+  poll_type        text NOT NULL CHECK (poll_type IN ('botw', 'sotw')),
+  candidates       text[] NOT NULL,
+  session_rejected text[] NOT NULL DEFAULT '{}',
+  user_votes       jsonb NOT NULL DEFAULT '{}',
+  starts_at        timestamptz NOT NULL,
+  ends_at          timestamptz NOT NULL,
+  voting_cutoff    timestamptz NOT NULL,
+  cutoff_unix      bigint NOT NULL,
+  window_str       text NOT NULL,
+  recent_names     text[] NOT NULL DEFAULT '{}',
+  pre_roll_history text[] NOT NULL DEFAULT '{}',
+  created_at       timestamptz DEFAULT now()
+);
+
 -- =====================================================================
 -- Row Level Security
 -- The bot uses the service role key (bypasses RLS).
@@ -64,41 +109,41 @@ CREATE POLICY "public read planks" ON planks FOR SELECT USING (true);
 
 CREATE OR REPLACE FUNCTION monthly_drop_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, total bigint) AS $$
-  SELECT player_name, SUM(gp_value)::bigint AS total
+  SELECT LOWER(player_name), SUM(gp_value)::bigint AS total
   FROM drops
   WHERE guild_id = p_guild_id
     AND date_trunc('month', recorded_at AT TIME ZONE 'UTC')
         = date_trunc('month', now() AT TIME ZONE 'UTC')
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY total DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION alltime_drop_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, total bigint) AS $$
-  SELECT player_name, SUM(gp_value)::bigint AS total
+  SELECT LOWER(player_name), SUM(gp_value)::bigint AS total
   FROM drops
   WHERE guild_id = p_guild_id
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY total DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION monthly_plank_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, count bigint) AS $$
-  SELECT player_name, COUNT(*)::bigint AS count
+  SELECT LOWER(player_name), COUNT(*)::bigint AS count
   FROM planks
   WHERE guild_id = p_guild_id
     AND date_trunc('month', recorded_at AT TIME ZONE 'UTC')
         = date_trunc('month', now() AT TIME ZONE 'UTC')
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY count DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION alltime_plank_leaderboard(p_guild_id text)
 RETURNS TABLE(player_name text, count bigint) AS $$
-  SELECT player_name, COUNT(*)::bigint AS count
+  SELECT LOWER(player_name), COUNT(*)::bigint AS count
   FROM planks
   WHERE guild_id = p_guild_id
-  GROUP BY player_name
+  GROUP BY LOWER(player_name)
   ORDER BY count DESC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 

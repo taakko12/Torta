@@ -1,4 +1,5 @@
 const supabase = require('./supabase');
+const { normalizeName } = require('./dropStorage');
 
 // ── Channel config ───────────────────────────────────────────────────────────
 
@@ -21,9 +22,24 @@ async function setPlanksChannel(guildId, channelId) {
 // ── Write ────────────────────────────────────────────────────────────────────
 
 async function recordDeath(guildId, playerName, messageId = null, imageUrl = null) {
+  const name = normalizeName(playerName);
+
+  // Dedup across sources (Dink + TrackScape plugin): skip if this player
+  // already has a death recorded in the last 5 minutes for this guild.
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: recent } = await supabase
+    .from('planks')
+    .select('id')
+    .eq('guild_id', guildId)
+    .eq('player_name', name)
+    .gte('recorded_at', since)
+    .limit(1)
+    .maybeSingle();
+  if (recent) return;
+
   const { error } = await supabase.from('planks').insert({
     guild_id: guildId,
-    player_name: playerName.toLowerCase(),
+    player_name: name,
     discord_message_id: messageId,
     image_url: imageUrl,
   });

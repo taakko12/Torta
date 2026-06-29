@@ -6,26 +6,27 @@ const { loadRaids, updateRaid } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
 const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
-const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootImage, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
+const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootItems, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
 const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./utils/welcomeStorage');
-const { startTrackscapeServer } = require('./utils/trackscapeServer');
+const { startTrackscapeServer, sendToGame } = require('./utils/trackscapeServer');
+const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
+const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
+const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
+const { isLootEmbed, dateToSnowflake } = require('./utils/messageHelper');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
   'F in chat',
   'another one for the plank board',
   'the wilderness always wins',
-  'rip the loot 😔',
-  'was it worth it? (no)',
-  'touched grass, died instantly',
+  'rip the loot',
+  'was it worth it?',
   'have you tried not dying?',
-  'the Iron Man in you has died',
-  'back to Lumbridge you go',
+  'back to Lumbridge noob',
   'your items are in a better place now',
   'estimated loot dropped: your dignity',
   'PKed or just bad? (both)',
-  'pour one out 🪣',
   'that one hurt to watch',
   'maybe try a safer spot next time',
   'bold strategy, did not pay off',
@@ -34,7 +35,9 @@ const DEATH_QUIPS = [
   'bosh, really good',
   '80% chance this was tru',
   'fuck you pearl',
-  '"dont you have like 1000 kc here? stop dying man"'
+  '"dont you have like 1000 kc here? stop dying man"',
+  'shoulda clicked the yellow pot, idiot',
+  'no surprise there'
 ];
 
 const client = new Client({
@@ -60,8 +63,10 @@ for (const file of commandFiles) {
 
 client.once('clientReady', () => {
   console.log(`[bot] Logged in as ${client.user.tag} (${client.commands.size} commands loaded)`);
-  startTrackscapeServer(client, parseInt(process.env.TRACKSCAPE_PORT) || 3000);
+  startTrackscapeServer(client, parseInt(process.env.PORT) || parseInt(process.env.TRACKSCAPE_PORT) || 3000);
   startReminderLoop();
+  checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
+  setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)
   ), 3000);
@@ -252,10 +257,6 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ This submission has already been resolved.', flags: 64 });
       }
 
-      if (action === 'loot_approve' && interaction.user.id === entry.userId) {
-        return interaction.reply({ content: '❌ You cannot approve your own submission.', flags: 64 });
-      }
-
       const oldEmbed = interaction.message.embeds[0];
       const newEmbed = EmbedBuilder.from(oldEmbed);
 
@@ -281,6 +282,50 @@ client.on('interactionCreate', async interaction => {
           );
         } catch {}
         console.log(`[loot] Rejected submission for "${entry.rsn}" by ${interaction.user.tag}`);
+      }
+      return;
+    }
+
+    // Poll vote/control buttons — looked up from Supabase so redeploys don't break active polls
+    if (/^(botw|sotw)_(vote_\d|accept|reroll)$/.test(interaction.customId)) {
+      const poll = await getPollByMessageId(interaction.message.id);
+      if (!poll) {
+        return interaction.reply({ content: '❌ This poll is no longer active.', flags: 64 });
+      }
+      const id = interaction.customId;
+
+      if (/_vote_\d$/.test(id)) {
+        const idx = parseInt(id.slice(-1));
+        if (isNaN(idx) || idx >= poll.candidates.length) return;
+        const userVotes = { ...poll.user_votes, [interaction.user.id]: idx };
+        await updatePoll(poll.id, { user_votes: userVotes });
+        return interaction.update({
+          embeds: [buildPollEmbed({ ...poll, user_votes: userVotes })],
+          components: buildPollComponents({ ...poll, user_votes: userVotes }),
+        });
+      }
+
+      if (id.endsWith('_accept')) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          return interaction.reply({ content: '❌ Only moderators can accept.', flags: 64 });
+        }
+        await interaction.deferUpdate();
+        return lockInPoll(poll, client, false);
+      }
+
+      if (id.endsWith('_reroll')) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+          return interaction.reply({ content: '❌ Only moderators can reroll.', flags: 64 });
+        }
+        const newRejected = [...new Set([...poll.session_rejected, ...poll.candidates,
+          ...poll.candidates.flatMap(c => getBossPartners(c))])];
+        const newCandidates = rollCandidates(poll.poll_type, poll.pre_roll_history, newRejected);
+        await updatePoll(poll.id, { candidates: newCandidates, session_rejected: newRejected, user_votes: {} });
+        const updated = { ...poll, candidates: newCandidates, session_rejected: newRejected, user_votes: {} };
+        return interaction.update({
+          embeds: [buildPollEmbed(updated)],
+          components: buildPollComponents(updated),
+        });
       }
       return;
     }
@@ -326,10 +371,20 @@ client.on('interactionCreate', async interaction => {
 
 // Watch configured channels for Dink death and loot webhook messages
 client.on('messageCreate', async message => {
-  if (!message.webhookId) return;
   if (!message.guildId) return;
 
   const guildId = message.guildId;
+
+  // Relay regular Discord messages to in-game clan chat via TrackScape WebSocket
+  if (!message.webhookId && !message.author?.bot && message.content) {
+    const tsConfig = await loadTrackscape(guildId);
+    if (tsConfig.clanChatChannelId && message.channelId === tsConfig.clanChatChannelId && tsConfig.verificationCode) {
+      const displayName = message.member?.displayName ?? message.author.username;
+      sendToGame(tsConfig.verificationCode, displayName, message.content);
+    }
+  }
+
+  if (!message.webhookId) return;
 
   const [planksChannelId, dropsChannelId] = await Promise.all([
     getPlanksChannelId(guildId),
@@ -348,14 +403,17 @@ client.on('messageCreate', async message => {
   }
 
   if (dropsChannelId && message.channelId === dropsChannelId) {
-    for (let i = 0; i < message.embeds.length; i++) {
-      const embed = message.embeds[i];
+    let dropIdx = 0;
+    for (const embed of message.embeds) {
       if (!isLootEmbed(embed)) continue;
       const playerName = parseLootPlayer(embed, message.content);
-      const gpValue = parseLootEmbed(embed);
-      if (playerName && gpValue > 0) {
-        await recordDrop(guildId, playerName, gpValue, parseLootItem(embed), parseLootImage(embed), message.id, i);
-        console.log(`[loot] Recorded ${gpValue.toLocaleString()} gp for "${playerName}" in guild ${guildId}`);
+      if (!playerName) continue;
+      const imageUrl = parseLootImage(embed);
+      const screenshotUrl = parseLootScreenshot(embed, message);
+      for (const { item, gpValue } of parseLootItems(embed)) {
+        await recordDrop(guildId, playerName, gpValue, item, imageUrl, screenshotUrl, message.id, dropIdx);
+        console.log(`[loot] Recorded ${gpValue.toLocaleString()} gp (${item}) for "${playerName}" in guild ${guildId}`);
+        dropIdx++;
       }
     }
   }
@@ -399,12 +457,17 @@ function parseDeathMessage(message) {
   return null;
 }
 
-function isLootEmbed(embed) {
-  const text = `${embed.title ?? ''} ${embed.description ?? ''}`;
-  return /loot|looted|received a drop|drop:/i.test(text);
-}
 
 client.on('error', err => console.error(`[discord] Client error: ${err.message}`));
+
+async function checkExpiredPolls() {
+  const expired = await getExpiredPolls();
+  for (const poll of expired) {
+    await lockInPoll(poll, client, true).catch(e =>
+      console.error(`[poll] Auto lock-in failed for ${poll.id}: ${e.message}`)
+    );
+  }
+}
 
 function startReminderLoop() {
   setInterval(() => {
@@ -502,6 +565,7 @@ async function retroParseGuild(guildId) {
     const messages = await fetchMessagesAfter(planksChannelId, afterSnowflake);
     let inserted = 0;
     for (const msg of messages) {
+      if (!msg.webhookId) continue;
       const name = parseDeathMessage(msg);
       if (name) {
         await recordDeath(guildId, name, msg.id, parseDeathImage(msg));
@@ -522,7 +586,7 @@ async function retroParseGuild(guildId) {
         const name = parseLootPlayer(embed, msg.content);
         const gp = parseLootEmbed(embed);
         if (name && gp > 0) {
-          await recordDrop(guildId, name, gp, parseLootItem(embed), parseLootImage(embed), msg.id, i);
+          await recordDrop(guildId, name, gp, parseLootItem(embed), parseLootImage(embed), parseLootScreenshot(embed, msg), msg.id, i);
           inserted++;
         }
       }
@@ -553,9 +617,6 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
-function dateToSnowflake(date) {
-  return ((BigInt(date.getTime()) - 1420070400000n) << 22n).toString();
-}
 
 client.login(process.env.DISCORD_TOKEN).catch(err => {
   console.error(`[startup] Failed to log in: ${err.message}`);

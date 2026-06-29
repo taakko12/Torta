@@ -1,5 +1,12 @@
 const supabase = require('./supabase');
 
+// Normalizes a player name to a consistent, comparable form.
+// Collapses all Unicode whitespace variants (non-breaking space, thin space,
+// etc.) to a regular space, then trims and lowercases.
+function normalizeName(name) {
+  return name.replace(/\s+/gu, ' ').trim().toLowerCase();
+}
+
 // ── Channel config ───────────────────────────────────────────────────────────
 
 async function getDropsChannelId(guildId) {
@@ -20,26 +27,77 @@ async function setDropsChannel(guildId, channelId) {
 
 // ── Write ────────────────────────────────────────────────────────────────────
 
-async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, messageId = null, embedIndex = 0) {
-  const { error } = await supabase.from('drops').insert({
+async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0, timestamp = null) {
+  const name = normalizeName(playerName);
+
+  // Cross-source dedup (Dink vs TrackScape plugin): look for a recent drop
+  // from the same player within 5 minutes. Try item name first (case-insensitive),
+  // then fall back to gp_value — item names can differ slightly between sources.
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const baseQuery = () => supabase
+    .from('drops')
+    .select('id, image_url, screenshot_url, item_name, gp_value')
+    .eq('guild_id', guildId)
+    .eq('player_name', name)
+    .gte('recorded_at', since)
+    .limit(1);
+
+  let recent = null;
+  if (itemName) {
+    const { data } = await baseQuery().ilike('item_name', itemName).maybeSingle();
+    recent = data;
+  }
+  if (!recent) {
+    const { data } = await baseQuery().eq('gp_value', gpValue).maybeSingle();
+    recent = data;
+  }
+
+  if (recent) {
+    const patch = {};
+    if (imageUrl && !recent.image_url) patch.image_url = imageUrl;
+    if (screenshotUrl) patch.screenshot_url = screenshotUrl;
+    if (itemName && !recent.item_name) patch.item_name = itemName;
+    // Keep the higher of the two source values — Dink rounds (e.g. 64.4M) while
+    // TrackScape sends exact coins; either may be higher depending on the item.
+    if (gpValue > recent.gp_value) patch.gp_value = gpValue;
+    if (Object.keys(patch).length > 0) {
+      const { error } = await supabase.from('drops').update(patch).eq('id', recent.id);
+      if (error) console.error(`[recordDrop] backfill update failed for id ${recent.id}: ${error.message}`);
+    }
+    return;
+  }
+
+  const insertData = {
     guild_id: guildId,
-    player_name: playerName.toLowerCase(),
+    player_name: name,
     gp_value: gpValue,
     item_name: itemName,
     image_url: imageUrl,
+    screenshot_url: screenshotUrl,
     discord_message_id: messageId,
     embed_index: embedIndex ?? 0,
-  });
+  };
+  if (timestamp) insertData.recorded_at = timestamp instanceof Date ? timestamp.toISOString() : timestamp;
+
+  const { error } = await supabase.from('drops').insert(insertData);
   if (error) {
     if (error.code !== '23505') throw error;
-    // Row already exists — backfill image_url if we now have one and it was missing
-    if (imageUrl && messageId != null) {
-      await supabase.from('drops')
-        .update({ image_url: imageUrl })
-        .eq('guild_id', guildId)
-        .eq('discord_message_id', messageId)
-        .eq('embed_index', embedIndex ?? 0)
-        .is('image_url', null);
+    if (messageId != null) {
+      const patch = {};
+      if (imageUrl) patch.image_url = imageUrl;
+      if (screenshotUrl) patch.screenshot_url = screenshotUrl;
+      if (itemName) patch.item_name = itemName;
+      // Correct gp_value — handles re-scraping an old aggregate row with the real per-item value.
+      if (gpValue) patch.gp_value = gpValue;
+      // Correct recorded_at when we now know the real message timestamp.
+      if (timestamp) patch.recorded_at = timestamp instanceof Date ? timestamp.toISOString() : timestamp;
+      if (Object.keys(patch).length > 0) {
+        await supabase.from('drops')
+          .update(patch)
+          .eq('guild_id', guildId)
+          .eq('discord_message_id', messageId)
+          .eq('embed_index', embedIndex ?? 0);
+      }
     }
   }
 }
@@ -61,12 +119,66 @@ async function getAlltimeLeaderboard(guildId) {
 async function getMostRecentDrop(guildId) {
   const { data } = await supabase
     .from('drops')
-    .select('player_name, gp_value, item_name, image_url, recorded_at')
+    .select('player_name, gp_value, item_name, image_url, screenshot_url, recorded_at')
     .eq('guild_id', guildId)
     .order('recorded_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   return data ?? null;
+}
+
+async function getPlayerStats(guildId, playerName) {
+  const [{ data: topDrops }, { data: allDrops }] = await Promise.all([
+    supabase
+      .from('drops')
+      .select('item_name, gp_value, recorded_at')
+      .eq('guild_id', guildId)
+      .ilike('player_name', playerName)
+      .order('gp_value', { ascending: false })
+      .limit(3),
+    supabase
+      .from('drops')
+      .select('gp_value, player_name')
+      .eq('guild_id', guildId)
+      .ilike('player_name', playerName),
+  ]);
+  const drops = allDrops ?? [];
+  return {
+    topDrops: topDrops ?? [],
+    totalGp: drops.reduce((sum, r) => sum + Number(r.gp_value), 0),
+    dropCount: drops.length,
+    // Use exact casing from DB for display
+    displayName: drops[0]?.player_name ?? playerName,
+  };
+}
+
+// ── Name changes ─────────────────────────────────────────────────────────────
+
+async function saveNameChange(guildId, oldName, newName) {
+  const { error } = await supabase.from('name_changes').upsert({
+    guild_id: guildId,
+    old_name: oldName.toLowerCase(),
+    new_name: newName.toLowerCase(),
+  }, { onConflict: 'guild_id,old_name' });
+  if (error) throw error;
+}
+
+async function getNameChangeMap(guildId) {
+  const { data } = await supabase
+    .from('name_changes')
+    .select('old_name, new_name')
+    .eq('guild_id', guildId);
+  return new Map((data ?? []).map(r => [r.old_name, r.new_name]));
+}
+
+function resolveNameFromMap(map, name) {
+  const seen = new Set();
+  let current = name.toLowerCase();
+  while (map.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = map.get(current);
+  }
+  return current;
 }
 
 // ── Admin ────────────────────────────────────────────────────────────────────
@@ -133,16 +245,65 @@ function parseLootEmbed(embed) {
 }
 
 function parseLootItem(embed) {
+  const desc = embed.description ?? '';
+
+  // Best source: "N x Item Name (value)" line in description (Loot Watch / Dink format)
+  const itemMatch = desc.match(/\d+\s*x\s+(.+?)\s*\(/);
+  if (itemMatch) {
+    const raw = itemMatch[1].trim();
+    return raw.startsWith('[') ? raw.replace(/^\[([^\]]+)\].*$/, '$1') : raw;
+  }
+
+  // Fallback: title, but skip generic titles like "Loot Drop"
   const title = embed.title ?? '';
   if (title) {
-    return title.replace(/^(valuable\s+drop|loot|drop)\s*:\s*/i, '').trim() || title.trim();
+    const stripped = title.replace(/^(valuable\s+drop|loot\s+drop|loot|drop)\s*:?\s*/i, '').trim();
+    if (stripped && !/^(drop|loot)$/i.test(stripped)) return stripped;
   }
-  const firstLine = (embed.description ?? '').split('\n')[0];
+
+  // Last resort: first description line
+  const firstLine = desc.split('\n')[0];
   return firstLine.replace(/\([\d.,]+[KMBkmb]?\)/g, '').replace(/has looted/i, '').trim() || 'Unknown item';
 }
 
+// Parses every "N x Item Name (value)" line from a Dink embed description.
+// Pearl/Dink bundles multi-item drops (e.g. Fortis Colosseum) into one embed;
+// this returns each item as a separate {item, gpValue} entry so they can be
+// recorded individually and dedup correctly against TrackScape broadcasts.
+// Falls back to single-item parsing for embeds that don't use the line format.
+function parseLootItems(embed) {
+  const desc = embed.description ?? '';
+  const items = [];
+
+  for (const line of desc.split('\n')) {
+    // Greedy item name match so "(uncharged)" style suffixes are included
+    const m = line.trim().match(/^(\d+)\s*x\s+(.+)\s+\(([\d.,]+[KMBkmb]?)\)$/);
+    if (!m) continue;
+    const value = parseGpString(m[3]);
+    // Dink hyperlinks item names as [Item Name](url) — URLs can contain nested
+    // parens (e.g. Special:Search?search=Item_(variant)) which break [^)]+ patterns.
+    // Safest: extract only the text inside [...] if the name starts with a bracket.
+    const raw = m[2].trim();
+    const itemText = raw.startsWith('[') ? raw.replace(/^\[([^\]]+)\].*$/, '$1') : raw;
+    if (value != null && value > 0) items.push({ item: itemText, gpValue: value });
+  }
+
+  if (items.length > 0) return items;
+
+  // Single-item fallback
+  const gpValue = parseLootEmbed(embed);
+  const item = parseLootItem(embed);
+  if (gpValue && gpValue > 0) return [{ item, gpValue }];
+  return [];
+}
+
 function parseLootImage(embed) {
-  return embed.thumbnail?.url ?? embed.image?.url ?? null;
+  return embed.thumbnail?.url ?? null; // OSRS wiki item sprite
+}
+
+function parseLootScreenshot(embed, message = null) {
+  if (embed.image?.url) return embed.image.url;
+  return message?.attachments?.first()?.url ?? null;
 }
 
 function parseLootPlayer(embed, content) {
@@ -161,17 +322,24 @@ function parseLootPlayer(embed, content) {
 }
 
 module.exports = {
+  normalizeName,
   getDropsChannelId,
   setDropsChannel,
   recordDrop,
   getMonthlyLeaderboard,
   getAlltimeLeaderboard,
   getMostRecentDrop,
+  getPlayerStats,
+  saveNameChange,
+  getNameChangeMap,
+  resolveNameFromMap,
   renamePlayer,
   resetMonthlyDrops,
   parseGpString,
   parseLootEmbed,
+  parseLootItems,
   parseLootImage,
+  parseLootScreenshot,
   parseLootItem,
   parseLootPlayer,
 };

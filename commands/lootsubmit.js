@@ -3,7 +3,7 @@ const { loadLoot, saveLoot, addPending } = require('../utils/lootStorage');
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('loot')
+    .setName('lootsubmit')
     .setDescription('Manual loot submission for mobile players')
     .addSubcommand(sub => sub
       .setName('submit')
@@ -36,7 +36,7 @@ module.exports = {
 
     if (sub === 'submit') {
       if (!data.reviewChannelId) {
-        return interaction.reply({ content: '❌ No review channel set yet. Ask an admin to run `/loot setchannel`.', flags: 64 });
+        return interaction.reply({ content: '❌ No review channel set yet. Ask an admin to run `/lootsubmit setchannel`.', flags: 64 });
       }
 
       const rsn = interaction.options.getString('rsn');
@@ -51,7 +51,7 @@ module.exports = {
 
       const reviewChannel = await interaction.client.channels.fetch(data.reviewChannelId).catch(() => null);
       if (!reviewChannel) {
-        return interaction.reply({ content: '❌ Review channel not found. Ask an admin to run `/loot setchannel` again.', flags: 64 });
+        return interaction.reply({ content: '❌ Review channel not found. Ask an admin to run `/lootsubmit setchannel` again.', flags: 64 });
       }
 
       const formatted = formatGp(gpValue);
