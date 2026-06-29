@@ -457,10 +457,6 @@ function parseDeathMessage(message) {
   return null;
 }
 
-function isLootEmbed(embed) {
-  const text = `${embed.title ?? ''} ${embed.description ?? ''}`;
-  return /loot|looted|received a drop|drop:/i.test(text);
-}
 
 client.on('error', err => console.error(`[discord] Client error: ${err.message}`));
 
@@ -621,9 +617,6 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
-function dateToSnowflake(date) {
-  return ((BigInt(date.getTime()) - 1420070400000n) << 22n).toString();
-}
 
 client.login(process.env.DISCORD_TOKEN).catch(err => {
   console.error(`[startup] Failed to log in: ${err.message}`);
