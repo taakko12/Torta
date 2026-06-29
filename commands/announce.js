@@ -10,7 +10,7 @@ module.exports = {
       .setName('schedule')
       .setDescription('Schedule an announcement to post at a specific time')
       .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post in').setRequired(true))
-      .addIntegerOption(opt => opt.setName('time').setDescription('Unix timestamp to post at (e.g. 1751900000)').setRequired(true))
+      .addStringOption(opt => opt.setName('time').setDescription('Unix timestamp — raw (1782749460) or Discord format (<t:1782749460:f>)').setRequired(true))
       .addStringOption(opt => opt.setName('message').setDescription('Announcement text (or upload a file instead)').setRequired(false))
       .addAttachmentOption(opt => opt.setName('file').setDescription('.txt or .md file').setRequired(false))
     )
@@ -50,7 +50,12 @@ module.exports = {
     }
 
     const channel = interaction.options.getChannel('channel');
-    const time = interaction.options.getInteger('time');
+    const timeInput = interaction.options.getString('time');
+    const tsMatch = /^<t:(\d+)(?::[tTdDfFR])?>$/.exec(timeInput.trim());
+    const time = parseInt(tsMatch ? tsMatch[1] : timeInput, 10);
+    if (isNaN(time)) {
+      return interaction.reply({ content: `❌ Couldn't parse "${timeInput}" as a timestamp.`, flags: 64 });
+    }
     const message = interaction.options.getString('message');
     const file = interaction.options.getAttachment('file');
 

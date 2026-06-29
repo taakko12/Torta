@@ -74,7 +74,15 @@ client.once('clientReady', () => {
       if (!ann || Date.now() < ann.scheduledAt) continue;
       try {
         const ch = await client.channels.fetch(ann.channelId);
-        await ch.send({ embeds: [new EmbedBuilder().setDescription(ann.content)] });
+        const mentionContent = [
+          ann.content.includes('@everyone') ? '@everyone' : null,
+          ann.content.includes('@here') ? '@here' : null,
+        ].filter(Boolean).join(' ') || undefined;
+        await ch.send({
+          content: mentionContent,
+          embeds: [new EmbedBuilder().setDescription(ann.content)],
+          allowedMentions: { parse: ['everyone'] },
+        });
       } catch (err) {
         console.error(`[announce] Failed to post in guild ${guildId}: ${err.message}`);
       }
