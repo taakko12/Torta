@@ -10,7 +10,7 @@ module.exports = {
       .setName('schedule')
       .setDescription('Schedule an announcement to post at a specific time')
       .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post in').setRequired(true))
-      .addStringOption(opt => opt.setName('time').setDescription('When to post — e.g. "July 6 2026 6pm EST" or "2026-07-06T18:00:00-05:00"').setRequired(true))
+      .addIntegerOption(opt => opt.setName('time').setDescription('Unix timestamp to post at (e.g. 1751900000)').setRequired(true))
       .addStringOption(opt => opt.setName('message').setDescription('Announcement text (or upload a file instead)').setRequired(false))
       .addAttachmentOption(opt => opt.setName('file').setDescription('.txt or .md file').setRequired(false))
     )
@@ -50,12 +50,7 @@ module.exports = {
     }
 
     const channel = interaction.options.getChannel('channel');
-    const timeInput = interaction.options.getString('time');
-    const parsed = new Date(timeInput);
-    if (isNaN(parsed.getTime())) {
-      return interaction.reply({ content: `❌ Couldn't parse "${timeInput}" as a date. Try something like \`July 6 2026 6pm EST\`.`, flags: 64 });
-    }
-    const time = Math.floor(parsed.getTime() / 1000);
+    const time = interaction.options.getInteger('time');
     const message = interaction.options.getString('message');
     const file = interaction.options.getAttachment('file');
 
@@ -63,7 +58,7 @@ module.exports = {
       return interaction.reply({ content: '❌ Provide a message or upload a `.txt`/`.md` file.', flags: 64 });
     }
 
-    if (parsed.getTime() <= Date.now()) {
+    if (time * 1000 <= Date.now()) {
       return interaction.reply({ content: '❌ Scheduled time must be in the future.', flags: 64 });
     }
 
