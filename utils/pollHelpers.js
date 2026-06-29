@@ -214,7 +214,7 @@ function buildPollEmbed(poll) {
       { name: 'Voting closes', value: `<t:${cutoff_unix}:f> (<t:${cutoff_unix}:R>)` },
       { name: 'Recent picks (excluded)', value: (recent_names ?? []).length > 0 ? recent_names.join(', ') : 'None yet' },
     )
-    .setFooter({ text: 'Vote for your pick | Mods: Accept Winner or Reroll for new options' })
+    .setFooter({ text: 'Vote for your pick | Mods: Accept Winner when ready' })
     .setTimestamp();
 }
 
@@ -230,7 +230,6 @@ function buildPollComponents(poll) {
   );
   const controlRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`${poll_type}_accept`).setLabel('✅ Accept Winner').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`${poll_type}_reroll`).setLabel('🔄 Reroll Options').setStyle(ButtonStyle.Secondary),
   );
   return [voteRow, controlRow];
 }

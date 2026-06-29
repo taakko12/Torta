@@ -287,7 +287,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     // Poll vote/control buttons — looked up from Supabase so redeploys don't break active polls
-    if (/^(botw|sotw)_(vote_\d|accept|reroll)$/.test(interaction.customId)) {
+    if (/^(botw|sotw)_(vote_\d|accept)$/.test(interaction.customId)) {
       const poll = await getPollByMessageId(interaction.message.id);
       if (!poll) {
         return interaction.reply({ content: '❌ This poll is no longer active.', flags: 64 });
@@ -313,20 +313,6 @@ client.on('interactionCreate', async interaction => {
         return lockInPoll(poll, client, false);
       }
 
-      if (id.endsWith('_reroll')) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-          return interaction.reply({ content: '❌ Only moderators can reroll.', flags: 64 });
-        }
-        const newRejected = [...new Set([...poll.session_rejected, ...poll.candidates,
-          ...poll.candidates.flatMap(c => getBossPartners(c))])];
-        const newCandidates = rollCandidates(poll.poll_type, poll.pre_roll_history, newRejected);
-        await updatePoll(poll.id, { candidates: newCandidates, session_rejected: newRejected, user_votes: {} });
-        const updated = { ...poll, candidates: newCandidates, session_rejected: newRejected, user_votes: {} };
-        return interaction.update({
-          embeds: [buildPollEmbed(updated)],
-          components: buildPollComponents(updated),
-        });
-      }
       return;
     }
 
