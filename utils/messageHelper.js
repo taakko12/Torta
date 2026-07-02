@@ -32,4 +32,15 @@ function parseBroadcastDropEmbed(embed) {
   return null;
 }
 
-module.exports = { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed };
+const ACHIEVEMENT_TITLES = ['Collection Log', 'XP Milestone', 'Level Up', 'Personal Best'];
+
+function parseBroadcastAchievementEmbed(embed) {
+  const title = embed.title ?? '';
+  const desc = (embed.description ?? '').replace(/\*\*/g, '');
+  if (!ACHIEVEMENT_TITLES.some(t => title.includes(t))) return null;
+  const m = desc.match(/^(.+?) (?:received|reached|set) /);
+  if (!m) return null;
+  return { player: m[1], title, description: desc };
+}
+
+module.exports = { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed };

@@ -13,8 +13,9 @@ const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
-const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed } = require('./utils/messageHelper');
+const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
+const { recordAchievement } = require('./utils/achievementStorage');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -406,10 +407,18 @@ client.on('messageCreate', async message => {
     const tsConfig = await loadTrackscape(guildId);
     if (tsConfig.broadcastChannelId && message.channelId === tsConfig.broadcastChannelId) {
       for (let i = 0; i < (message.embeds ?? []).length; i++) {
-        const parsed = parseBroadcastDropEmbed(message.embeds[i]);
-        if (!parsed || !(parsed.value > 0)) continue;
-        await recordDrop(guildId, parsed.player, parsed.value, parsed.item, null, null, message.id, i);
-        console.log(`[broadcast] Recorded ${parsed.value.toLocaleString()} gp (${parsed.item}) for "${parsed.player}" in guild ${guildId}`);
+        const embed = message.embeds[i];
+        const drop = parseBroadcastDropEmbed(embed);
+        if (drop && drop.value > 0) {
+          await recordDrop(guildId, drop.player, drop.value, drop.item, null, null, message.id, i);
+          console.log(`[broadcast] Drop ${drop.value.toLocaleString()} gp (${drop.item}) for "${drop.player}" in guild ${guildId}`);
+          continue;
+        }
+        const achievement = parseBroadcastAchievementEmbed(embed);
+        if (achievement) {
+          await recordAchievement(guildId, achievement.player, achievement.title, achievement.description, message.id, i);
+          console.log(`[broadcast] Achievement "${achievement.title}" for "${achievement.player}" in guild ${guildId}`);
+        }
       }
     }
     return;

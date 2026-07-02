@@ -68,6 +68,27 @@ CREATE TABLE IF NOT EXISTS name_changes (
   PRIMARY KEY (guild_id, old_name)
 );
 
+-- Clan achievement broadcasts (level ups, collection log, XP milestones, PBs)
+CREATE TABLE IF NOT EXISTS achievements (
+  id                 uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  guild_id           text NOT NULL,
+  player_name        text NOT NULL,
+  title              text NOT NULL,
+  description        text NOT NULL,
+  discord_message_id text,
+  embed_index        integer NOT NULL DEFAULT 0,
+  recorded_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS achievements_dedup
+  ON achievements (guild_id, discord_message_id, embed_index)
+  WHERE discord_message_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS achievements_guild_time ON achievements (guild_id, recorded_at DESC);
+
+ALTER TABLE achievements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read achievements" ON achievements FOR SELECT USING (true);
+
 -- Active polls — persisted so Railway redeploys don't lose voting state
 -- Run this if the table doesn't exist yet:
 CREATE TABLE IF NOT EXISTS active_polls (
