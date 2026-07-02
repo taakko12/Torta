@@ -16,6 +16,7 @@ const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBoss
 const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
 const { recordAchievement } = require('./utils/achievementStorage');
+const { loadData, saveData } = require('./utils/storage');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -69,6 +70,30 @@ client.once('clientReady', () => {
   startReminderLoop();
   checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
   setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
+  setInterval(async () => {
+    const now = new Date();
+    // Saturday = 6, fire once after 12:00 UTC using lastAutoRollDate to prevent double-fire
+    if (now.getUTCDay() === 6 && now.getUTCHours() >= 12) {
+      const today = now.toISOString().slice(0, 10);
+      const { rollPollToChannel } = require('./commands/comp');
+      for (const [guildId] of client.guilds.cache) {
+        const data = loadData(guildId);
+        if (data.lastAutoRollDate === today || !data.pollChannelId) continue;
+        const channel = await client.channels.fetch(data.pollChannelId).catch(() => null);
+        if (!channel) continue;
+        try {
+          await rollPollToChannel('botw', guildId, channel, data);
+          await rollPollToChannel('sotw', guildId, channel, data);
+          data.lastAutoRollDate = today;
+          saveData(guildId, data);
+          console.log(`[auto-roll] Posted BOTW + SOTW polls for guild ${guildId}`);
+        } catch (err) {
+          console.error(`[auto-roll] Failed for guild ${guildId}: ${err.message}`);
+        }
+      }
+    }
+  }, 60_000);
+
   setInterval(async () => {
     for (const [guildId] of client.guilds.cache) {
       const ann = loadAnnounce(guildId);

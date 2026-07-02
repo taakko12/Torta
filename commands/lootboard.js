@@ -10,7 +10,7 @@ const supabase = require('../utils/supabase');
 const { loadTrackscape } = require('../utils/trackscapeStorage');
 const { currentMonth } = require('../utils/plankStorage');
 const { MEDALS } = require('../utils/constants');
-const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed } = require('../utils/messageHelper');
+const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, fetchAllMessages } = require('../utils/messageHelper');
 
 function formatGp(value) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B gp`;
@@ -34,33 +34,6 @@ function buildLeaderboardEmbed(entries, title, color) {
   return embed;
 }
 
-async function fetchAllMessages(channel, afterSnowflake = null) {
-  const all = [];
-  if (afterSnowflake) {
-    let lastId = afterSnowflake;
-    while (true) {
-      const batch = await channel.messages.fetch({ limit: 100, after: lastId });
-      if (batch.size === 0) break;
-      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-      all.push(...msgs);
-      lastId = msgs[msgs.length - 1].id;
-      if (batch.size < 100) break;
-    }
-  } else {
-    let lastId = null;
-    while (true) {
-      const options = { limit: 100 };
-      if (lastId) options.before = lastId;
-      const batch = await channel.messages.fetch(options);
-      if (batch.size === 0) break;
-      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-      all.push(...msgs);
-      lastId = batch.sort((a, b) => a.createdTimestamp - b.createdTimestamp).first().id;
-      if (batch.size < 100) break;
-    }
-  }
-  return all;
-}
 
 
 module.exports = {

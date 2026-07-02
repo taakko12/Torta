@@ -100,6 +100,19 @@ async function renamePlayer(guildId, oldName, newName) {
   return count;
 }
 
+async function getPlayerDeaths(guildId, playerName) {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const [{ count: total }, { count: monthly }] = await Promise.all([
+    supabase.from('planks').select('*', { count: 'exact', head: true })
+      .eq('guild_id', guildId).ilike('player_name', playerName),
+    supabase.from('planks').select('*', { count: 'exact', head: true })
+      .eq('guild_id', guildId).ilike('player_name', playerName)
+      .gte('recorded_at', monthStart),
+  ]);
+  return { total: total ?? 0, monthly: monthly ?? 0 };
+}
+
 async function resetMonthlyPlanks(guildId) {
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
@@ -125,6 +138,7 @@ module.exports = {
   getMonthlyLeaderboard,
   getAlltimeLeaderboard,
   getMostRecentPlank,
+  getPlayerDeaths,
   renamePlayer,
   resetMonthlyPlanks,
   currentMonth,

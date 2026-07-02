@@ -12,13 +12,11 @@ async function recordAchievement(guildId, player, title, description, messageId 
   if (error && error.code !== '23505') throw error;
 }
 
-async function getRecentAchievements(guildId, limit = 20) {
-  const { data } = await supabase
-    .from('achievements')
-    .select('*')
-    .eq('guild_id', guildId)
-    .order('recorded_at', { ascending: false })
-    .limit(limit);
+async function getRecentAchievements(guildId, { limit = 20, player = null } = {}) {
+  let q = supabase.from('achievements').select('*')
+    .eq('guild_id', guildId).order('recorded_at', { ascending: false }).limit(limit);
+  if (player) q = q.ilike('player_name', player);
+  const { data } = await q;
   return data ?? [];
 }
 

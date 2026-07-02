@@ -224,6 +224,40 @@ async function execSotwRoll(interaction) {
   await createPoll(poll);
 }
 
+// ── Standalone channel roll (used by auto-scheduler in index.js) ──────────────
+
+async function rollPollToChannel(type, guildId, channel, data) {
+  const histKey = type === 'botw' ? 'botwHistory' : 'sotwHistory';
+  const history = data[histKey] ?? [];
+  const { startsAt, endsAt } = nextCompWindow();
+  const startsUnix = Math.floor(startsAt.getTime() / 1000);
+  const endsUnix = Math.floor(endsAt.getTime() / 1000);
+  const votingCutoff = new Date(startsAt.getTime() - 10 * 60 * 1000);
+  const cutoffUnix = Math.floor(votingCutoff.getTime() / 1000);
+  const candidates = rollCandidates(type, history, []);
+  const displayMap = type === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+  const poll = {
+    guild_id: guildId,
+    channel_id: channel.id,
+    poll_type: type,
+    candidates,
+    session_rejected: type === 'botw'
+      ? candidates.flatMap(c => [c, ...getBossPartners(c)])
+      : [...candidates],
+    user_votes: {},
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    voting_cutoff: votingCutoff.toISOString(),
+    cutoff_unix: cutoffUnix,
+    window_str: `<t:${startsUnix}:f> → <t:${endsUnix}:f>`,
+    recent_names: history.slice(-HISTORY_SIZE).map(n => displayMap[n] ?? n),
+    pre_roll_history: history,
+  };
+  const msg = await channel.send({ embeds: [buildPollEmbed(poll)], components: buildPollComponents(poll) });
+  poll.message_id = msg.id;
+  await createPoll(poll);
+}
+
 // ── Command definition ────────────────────────────────────────────────────────
 
 function addGroupSubcommands(group) {
@@ -247,6 +281,11 @@ function addGroupSubcommands(group) {
       .setDescription('Roll 3 options for a community vote poll — admin only')
     )
     .addSubcommand(sub => sub
+      .setName('setpollchannel')
+      .setDescription('Set the channel for auto-scheduled Saturday polls — admin only')
+      .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post polls in').setRequired(true))
+    )
+    .addSubcommand(sub => sub
       .setName('add')
       .setDescription('Add win(s) to a member — admin only')
       .addUserOption(opt => opt.setName('user').setDescription('Member to award').setRequired(true))
@@ -266,7 +305,7 @@ function addGroupSubcommands(group) {
     );
 }
 
-const ADMIN_SUBS = new Set(['leaderboard', 'roll', 'add', 'remove', 'set']);
+const ADMIN_SUBS = new Set(['leaderboard', 'roll', 'setpollchannel', 'add', 'remove', 'set']);
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -284,6 +323,14 @@ module.exports = {
       return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
     }
 
+    if (sub === 'setpollchannel') {
+      const channel = interaction.options.getChannel('channel');
+      const data = loadData(interaction.guildId);
+      data.pollChannelId = channel.id;
+      saveData(interaction.guildId, data);
+      return interaction.reply({ content: `✅ Poll channel set to <#${channel.id}>. BOTW and SOTW polls will auto-post there every Saturday at 12:00 UTC.`, flags: 64 });
+    }
+
     if (sub === 'wins') return execWins(interaction, cfg);
     if (sub === 'leaderboard') return execLeaderboard(interaction, cfg);
     if (sub === 'add') return execAdd(interaction, cfg);
@@ -298,4 +345,6 @@ module.exports = {
       if (sub === 'roll') return execSotwRoll(interaction);
     }
   },
+
+  rollPollToChannel,
 };

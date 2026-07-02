@@ -32,6 +32,34 @@ function parseBroadcastDropEmbed(embed) {
   return null;
 }
 
+async function fetchAllMessages(channel, afterSnowflake = null) {
+  const all = [];
+  if (afterSnowflake) {
+    let lastId = afterSnowflake;
+    while (true) {
+      const batch = await channel.messages.fetch({ limit: 100, after: lastId });
+      if (batch.size === 0) break;
+      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+      all.push(...msgs);
+      lastId = msgs[msgs.length - 1].id;
+      if (batch.size < 100) break;
+    }
+  } else {
+    let lastId = null;
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+      const batch = await channel.messages.fetch(options);
+      if (batch.size === 0) break;
+      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+      all.push(...msgs);
+      lastId = batch.sort((a, b) => a.createdTimestamp - b.createdTimestamp).first().id;
+      if (batch.size < 100) break;
+    }
+  }
+  return all;
+}
+
 const ACHIEVEMENT_TITLES = ['Collection Log', 'XP Milestone', 'Level Up', 'Personal Best'];
 
 function parseBroadcastAchievementEmbed(embed) {
@@ -43,4 +71,4 @@ function parseBroadcastAchievementEmbed(embed) {
   return { player: m[1], title, description: desc };
 }
 
-module.exports = { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed };
+module.exports = { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed, fetchAllMessages };

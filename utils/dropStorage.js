@@ -200,6 +200,15 @@ async function renamePlayer(guildId, oldName, newName) {
   return count;
 }
 
+async function getPlayerMonthlyGp(guildId, playerName) {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { data } = await supabase.from('drops').select('gp_value')
+    .eq('guild_id', guildId).ilike('player_name', playerName)
+    .gte('recorded_at', monthStart);
+  return (data ?? []).reduce((sum, r) => sum + Number(r.gp_value), 0);
+}
+
 async function resetMonthlyDrops(guildId) {
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
@@ -334,6 +343,7 @@ module.exports = {
   getNameChangeMap,
   resolveNameFromMap,
   renamePlayer,
+  getPlayerMonthlyGp,
   resetMonthlyDrops,
   parseGpString,
   parseLootEmbed,
