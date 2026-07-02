@@ -1,4 +1,4 @@
-const { supabase } = require('./supabase');
+const supabase = require('./supabase');
 
 async function recordAchievement(guildId, player, title, description, messageId = null, embedIndex = 0) {
   const { error } = await supabase.from('achievements').insert({
