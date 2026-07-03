@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS bingo_tasks (
   image_url      text,
   points         int  NOT NULL DEFAULT 1,
   required_count int  NOT NULL DEFAULT 1,
+  points_per_submission int,
   UNIQUE(event_id, position)
 );
 
