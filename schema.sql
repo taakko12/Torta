@@ -192,3 +192,67 @@ GRANT EXECUTE ON FUNCTION alltime_plank_leaderboard(text) TO anon;
 INSERT INTO guild_config (guild_id, drops_channel_id, planks_channel_id)
 VALUES ('1507110016342167622', '1514356163569782944', '1513189530264670248')
 ON CONFLICT (guild_id) DO NOTHING;
+
+-- =====================================================================
+-- Bingo system
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS bingo_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id    text NOT NULL,
+  title       text NOT NULL,
+  board_size  int  NOT NULL DEFAULT 5,
+  active      bool NOT NULL DEFAULT false,
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bingo_tasks (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id       uuid REFERENCES bingo_events(id) ON DELETE CASCADE,
+  position       int  NOT NULL,
+  title          text NOT NULL,
+  description    text,
+  image_url      text,
+  points         int  NOT NULL DEFAULT 1,
+  required_count int  NOT NULL DEFAULT 1,
+  UNIQUE(event_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS bingo_teams (
+  id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid REFERENCES bingo_events(id) ON DELETE CASCADE,
+  name     text NOT NULL,
+  color    text NOT NULL DEFAULT '#c89b3c'
+);
+
+CREATE TABLE IF NOT EXISTS bingo_team_members (
+  id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id uuid REFERENCES bingo_teams(id) ON DELETE CASCADE,
+  rsn     text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bingo_submissions (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id        uuid REFERENCES bingo_events(id) ON DELETE CASCADE,
+  task_id         uuid REFERENCES bingo_tasks(id) ON DELETE CASCADE,
+  rsn             text NOT NULL,
+  screenshot_url  text,
+  screenshot_path text,
+  notes           text,
+  status          text NOT NULL DEFAULT 'pending',
+  submitted_at    timestamptz DEFAULT now(),
+  reviewed_at     timestamptz,
+  reviewed_by     text
+);
+
+ALTER TABLE bingo_events      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_tasks       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_teams       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_team_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_submissions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "public read bingo_events"       ON bingo_events       FOR SELECT USING (true);
+CREATE POLICY "public read bingo_tasks"        ON bingo_tasks        FOR SELECT USING (true);
+CREATE POLICY "public read bingo_teams"        ON bingo_teams        FOR SELECT USING (true);
+CREATE POLICY "public read bingo_team_members" ON bingo_team_members FOR SELECT USING (true);
+CREATE POLICY "public read bingo_submissions"  ON bingo_submissions  FOR SELECT USING (true);
