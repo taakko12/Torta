@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { loadData, saveData, getBoard } = require('../utils/storage');
+const { loadData, saveData, getBoard, setPollChannelId } = require('../utils/storage');
 const { refreshLeaderboardMessage } = require('../utils/updateLeaderboard');
 const { buildLeaderboardEmbed } = require('../utils/leaderboardEmbed');
 const { MEDALS } = require('../utils/constants');
@@ -325,9 +325,7 @@ module.exports = {
 
     if (sub === 'setpollchannel') {
       const channel = interaction.options.getChannel('channel');
-      const data = loadData(interaction.guildId);
-      data.pollChannelId = channel.id;
-      saveData(interaction.guildId, data);
+      await setPollChannelId(interaction.guildId, channel.id);
       return interaction.reply({ content: `✅ Poll channel set to <#${channel.id}>. BOTW and SOTW polls will auto-post there every Saturday at 12:00 UTC.`, flags: 64 });
     }
 

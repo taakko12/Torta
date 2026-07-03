@@ -31,7 +31,7 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();
-    const panel = loadPanel(guildId);
+    const panel = await loadPanel(guildId);
 
     if (sub === 'create') {
       const embed = buildPanelEmbed(panel.roles);
@@ -50,7 +50,7 @@ module.exports = {
       const message = await interaction.channel.send({ embeds: [embed], components: rows });
       panel.channelId = interaction.channel.id;
       panel.messageId = message.id;
-      savePanel(guildId, panel);
+      await savePanel(guildId, panel);
 
       await interaction.reply({ content: '✅ Role panel posted!', flags: 64 });
 
@@ -67,7 +67,7 @@ module.exports = {
       }
 
       panel.roles.push({ roleId: role.id, emoji, label });
-      savePanel(guildId, panel);
+      await savePanel(guildId, panel);
       await updatePanelMessage(interaction.client, panel);
 
       await interaction.reply({ content: `✅ Added ${emoji} <@&${role.id}> to the panel.`, flags: 64 });
@@ -81,7 +81,7 @@ module.exports = {
         return interaction.reply({ content: `❌ <@&${role.id}> is not on the panel.`, flags: 64 });
       }
 
-      savePanel(guildId, panel);
+      await savePanel(guildId, panel);
       await updatePanelMessage(interaction.client, panel);
 
       await interaction.reply({ content: `✅ Removed <@&${role.id}> from the panel.`, flags: 64 });

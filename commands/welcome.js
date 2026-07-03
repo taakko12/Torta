@@ -69,7 +69,7 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();
-    const data = loadWelcome(guildId);
+    const data = await loadWelcome(guildId);
 
     if (sub === 'post') {
       if (data.channelId && data.messageId) {
@@ -89,19 +89,19 @@ module.exports = {
 
       data.channelId = interaction.channel.id;
       data.messageId = message.id;
-      saveWelcome(guildId, data);
+      await saveWelcome(guildId, data);
       await interaction.reply({ content: '✅ Rules panel posted!', flags: 64 });
 
     } else if (sub === 'setrole') {
       const role = interaction.options.getRole('role');
       data.roleId = role.id;
-      saveWelcome(guildId, data);
+      await saveWelcome(guildId, data);
       await interaction.reply({ content: `✅ Members will receive <@&${role.id}> when approved by a mod.`, flags: 64 });
 
     } else if (sub === 'setmodchannel') {
       const channel = interaction.options.getChannel('channel');
       data.modChannelId = channel.id;
-      saveWelcome(guildId, data);
+      await saveWelcome(guildId, data);
       await interaction.reply({ content: `✅ TOS approval requests will be sent to ${channel}.`, flags: 64 });
     }
   }

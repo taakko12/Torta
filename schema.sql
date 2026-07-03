@@ -13,10 +13,18 @@ CREATE TABLE IF NOT EXISTS guild_config (
   broadcast_channel_id  text
 );
 
--- If the table already exists, add the TrackScape columns
+-- If the table already exists, add columns incrementally
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS trackscape_code      text UNIQUE;
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS clanchat_channel_id  text;
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS broadcast_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS poll_channel_id      text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS last_auto_roll_date  text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_role_id      text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_mod_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_channel_id   text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_message_id   text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS role_panel_config    jsonb;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS lootsubmit_channel_id text;
 
 -- If name_changes doesn't exist yet, the CREATE TABLE IF NOT EXISTS above handles it.
 -- If you added it manually without changed_at, run:

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const supabase = require('./supabase');
 
 function dataPath(guildId) {
   return path.join(__dirname, '..', 'data', guildId, 'wins.json');
@@ -31,4 +32,11 @@ function getBoard(data, boardKey) {
   return data.boards[boardKey];
 }
 
-module.exports = { loadData, saveData, getBoard };
+async function setPollChannelId(guildId, channelId) {
+  await supabase.from('guild_config').upsert(
+    { guild_id: guildId, poll_channel_id: channelId },
+    { onConflict: 'guild_id' }
+  );
+}
+
+module.exports = { loadData, saveData, getBoard, setPollChannelId };

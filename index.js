@@ -16,7 +16,8 @@ const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBoss
 const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
 const { recordAchievement } = require('./utils/achievementStorage');
-const { loadData, saveData } = require('./utils/storage');
+const { loadData } = require('./utils/storage');
+const supabase = require('./utils/supabase');
 
 const DEATH_QUIPS = [
   'skill issue 💀',
@@ -72,24 +73,24 @@ client.once('clientReady', () => {
   setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
   setInterval(async () => {
     const now = new Date();
-    // Saturday = 6, fire once after 12:00 UTC using lastAutoRollDate to prevent double-fire
-    if (now.getUTCDay() === 6 && now.getUTCHours() >= 12) {
-      const today = now.toISOString().slice(0, 10);
-      const { rollPollToChannel } = require('./commands/comp');
-      for (const [guildId] of client.guilds.cache) {
-        const data = loadData(guildId);
-        if (data.lastAutoRollDate === today || !data.pollChannelId) continue;
-        const channel = await client.channels.fetch(data.pollChannelId).catch(() => null);
-        if (!channel) continue;
-        try {
-          await rollPollToChannel('botw', guildId, channel, data);
-          await rollPollToChannel('sotw', guildId, channel, data);
-          data.lastAutoRollDate = today;
-          saveData(guildId, data);
-          console.log(`[auto-roll] Posted BOTW + SOTW polls for guild ${guildId}`);
-        } catch (err) {
-          console.error(`[auto-roll] Failed for guild ${guildId}: ${err.message}`);
-        }
+    if (now.getUTCDay() !== 6 || now.getUTCHours() < 12) return;
+    const today = now.toISOString().slice(0, 10);
+    const { data: configs } = await supabase.from('guild_config')
+      .select('guild_id, poll_channel_id, last_auto_roll_date')
+      .not('poll_channel_id', 'is', null);
+    const { rollPollToChannel } = require('./commands/comp');
+    for (const cfg of configs ?? []) {
+      if (cfg.last_auto_roll_date === today) continue;
+      const channel = await client.channels.fetch(cfg.poll_channel_id).catch(() => null);
+      if (!channel) continue;
+      try {
+        const guildData = loadData(cfg.guild_id);
+        await rollPollToChannel('botw', cfg.guild_id, channel, guildData);
+        await rollPollToChannel('sotw', cfg.guild_id, channel, guildData);
+        await supabase.from('guild_config').update({ last_auto_roll_date: today }).eq('guild_id', cfg.guild_id);
+        console.log(`[auto-roll] Posted BOTW + SOTW polls for guild ${cfg.guild_id}`);
+      } catch (err) {
+        console.error(`[auto-roll] Failed for guild ${cfg.guild_id}: ${err.message}`);
       }
     }
   }, 60_000);
@@ -144,7 +145,7 @@ client.on('interactionCreate', async interaction => {
     // Role panel toggle
     if (action === 'rolepanel') {
       const roleId = payload;
-      const panel = loadPanel(interaction.guildId);
+      const panel = await loadPanel(interaction.guildId);
       const entry = panel.roles.find(r => r.roleId === roleId);
       if (!entry) {
         return interaction.reply({ content: '❌ That role is no longer on the panel.', flags: 64 });
@@ -171,7 +172,7 @@ client.on('interactionCreate', async interaction => {
     // Welcome / TOS agree button — queue for mod approval
     if (action === 'welcome_agree') {
       const guildId = interaction.guildId;
-      const welcome = loadWelcome(guildId);
+      const welcome = await loadWelcome(guildId);
 
       if (welcome.roleId && interaction.member.roles.cache.has(welcome.roleId)) {
         return interaction.reply({ content: '✅ You already have the member role!', flags: 64 });
@@ -228,7 +229,7 @@ client.on('interactionCreate', async interaction => {
     // Mod approves/rejects a TOS application
     if (action === 'welcome_modapprove' || action === 'welcome_modreject') {
       const guildId = interaction.guildId;
-      const welcome = loadWelcome(guildId);
+      const welcome = await loadWelcome(guildId);
       const entry = resolveWelcomePending(guildId, welcome, payload);
 
       if (!entry) {
@@ -295,7 +296,7 @@ client.on('interactionCreate', async interaction => {
 
       const messageId = payload;
       const guildId = interaction.guildId;
-      const lootData = loadLoot(guildId);
+      const lootData = await loadLoot(guildId);
       const entry = resolvePending(guildId, lootData, messageId);
 
       if (!entry) {

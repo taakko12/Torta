@@ -22,7 +22,7 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();
-    const data = loadLoot(guildId);
+    const data = await loadLoot(guildId);
 
     if (sub === 'setchannel') {
       if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
@@ -30,7 +30,7 @@ module.exports = {
       }
       const channel = interaction.options.getChannel('channel');
       data.reviewChannelId = channel.id;
-      saveLoot(guildId, data);
+      await saveLoot(guildId, data);
       return interaction.reply({ content: `✅ Loot submissions will be reviewed in ${channel}.`, flags: 64 });
     }
 
