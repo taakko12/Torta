@@ -57,7 +57,7 @@ module.exports = {
       for (let i = 0; i < (msg.embeds ?? []).length; i++) {
         const parsed = parseBroadcastAchievementEmbed(msg.embeds[i]);
         if (!parsed) continue;
-        await recordAchievement(guildId, parsed.player, parsed.title, parsed.description, msg.id, i);
+        await recordAchievement(guildId, parsed.player, parsed.title, parsed.description, msg.id, i, msg.createdAt);
         count++;
       }
     }

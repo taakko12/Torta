@@ -1,14 +1,9 @@
 const supabase = require('./supabase');
 
-async function recordAchievement(guildId, player, title, description, messageId = null, embedIndex = 0) {
-  const { error } = await supabase.from('achievements').insert({
-    guild_id: guildId,
-    player_name: player,
-    title,
-    description,
-    discord_message_id: messageId,
-    embed_index: embedIndex,
-  });
+async function recordAchievement(guildId, player, title, description, messageId = null, embedIndex = 0, timestamp = null) {
+  const row = { guild_id: guildId, player_name: player, title, description, discord_message_id: messageId, embed_index: embedIndex };
+  if (timestamp) row.recorded_at = timestamp instanceof Date ? timestamp.toISOString() : timestamp;
+  const { error } = await supabase.from('achievements').insert(row);
   if (error && error.code !== '23505') throw error;
 }
 
