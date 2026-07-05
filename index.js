@@ -116,6 +116,8 @@ client.once('clientReady', () => {
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)
   ), 3000);
+  setTimeout(() => syncWomGroup(), 60_000);
+  setInterval(() => syncWomGroup(), 3_600_000);
 });
 
 client.on('interactionCreate', async interaction => {
@@ -683,6 +685,25 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
+
+async function syncWomGroup() {
+  const groupId = process.env.WOM_GROUP_ID
+  if (!groupId) return
+  try {
+    const res = await fetch(`https://api.wiseoldman.net/v2/groups/${groupId}/update-all`, {
+      method: 'POST',
+      headers: { 'User-Agent': process.env.WOM_USER_AGENT || 'clan-bot' },
+    })
+    if (res.ok) {
+      console.log('[wom] Group sync triggered')
+    } else {
+      const body = await res.text()
+      console.warn(`[wom] Group sync failed (${res.status}): ${body}`)
+    }
+  } catch (err) {
+    console.error(`[wom] Group sync error: ${err.message}`)
+  }
+}
 
 client.login(process.env.DISCORD_TOKEN).catch(err => {
   console.error(`[startup] Failed to log in: ${err.message}`);
