@@ -701,8 +701,13 @@ async function syncWomGroup() {
     if (res.ok) {
       console.log('[wom] Group sync triggered')
     } else {
-      const body = await res.text()
-      console.warn(`[wom] Group sync failed (${res.status}): ${body}`)
+      const body = await res.text().catch(() => '')
+      const json = JSON.parse(body || '{}')
+      if (json.code === 'NO_OUTDATED_MEMBERS') {
+        console.log('[wom] Group sync skipped — all members up to date')
+      } else {
+        console.warn(`[wom] Group sync failed (${res.status}): ${body}`)
+      }
     }
   } catch (err) {
     console.error(`[wom] Group sync error: ${err.message}`)
