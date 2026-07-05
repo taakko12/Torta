@@ -688,11 +688,13 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
 
 async function syncWomGroup() {
   const groupId = process.env.WOM_GROUP_ID
-  if (!groupId) return
+  const verificationCode = process.env.WOM_VERIFICATION_CODE
+  if (!groupId || !verificationCode) return
   try {
     const res = await fetch(`https://api.wiseoldman.net/v2/groups/${groupId}/update-all`, {
       method: 'POST',
-      headers: { 'User-Agent': process.env.WOM_USER_AGENT || 'clan-bot' },
+      headers: { 'Content-Type': 'application/json', 'User-Agent': process.env.WOM_USER_AGENT || 'clan-bot' },
+      body: JSON.stringify({ verificationCode }),
     })
     if (res.ok) {
       console.log('[wom] Group sync triggered')
