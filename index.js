@@ -465,8 +465,10 @@ client.on('messageCreate', async message => {
       const deathImage = parseDeathImage(message);
       await recordDeath(guildId, playerName, message.id, deathImage);
       console.log(`[planks] Recorded death for "${playerName}" in guild ${guildId}`);
-      const quip = DEATH_QUIPS[Math.floor(Math.random() * DEATH_QUIPS.length)];
-      message.channel.send(`**${playerName}** — ${quip}`).catch(() => {});
+      if (Math.random() < 0.4) {
+        const quip = DEATH_QUIPS[Math.floor(Math.random() * DEATH_QUIPS.length)];
+        message.channel.send(`**${playerName}** — ${quip}`).catch(() => {});
+      }
     }
   }
 
