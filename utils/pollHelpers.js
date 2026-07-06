@@ -333,10 +333,10 @@ async function lockInPoll(poll, client, autoClose = false) {
   }
 
   // Persist winner to guild history
-  const data = loadData(guild_id);
+  const data = await loadData(guild_id);
   const histKey = poll_type === 'botw' ? 'botwHistory' : 'sotwHistory';
   data[histKey] = [...(pre_roll_history ?? []), winner].slice(-HISTORY_SIZE * 2);
-  saveData(guild_id, data);
+  await saveData(guild_id, data);
 
   console.log(`[${tag}] Locked in: ${winner}${autoClose ? ' (auto)' : ''}`);
 }

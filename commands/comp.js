@@ -16,16 +16,16 @@ const SOTW = { key: 'sotw', label: 'Skill of the Week', emoji: '📈', color: 0x
 
 // ── Shared win-board handlers ─────────────────────────────────────────────────
 
-function execWins(interaction, cfg) {
+async function execWins(interaction, cfg) {
   const user = interaction.options.getUser('user') ?? interaction.user;
-  const board = getBoard(loadData(interaction.guildId), cfg.key);
+  const board = getBoard(await loadData(interaction.guildId), cfg.key);
   const wins = board.users[user.id]?.wins ?? 0;
   return interaction.reply(`${cfg.emoji} <@${user.id}> has **${wins}** ${cfg.label} win${wins === 1 ? '' : 's'}.`);
 }
 
 async function execLeaderboard(interaction, cfg) {
   const guildId = interaction.guildId;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   const embed = buildLeaderboardEmbed(board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   const message = await interaction.channel.send({ embeds: [embed] });
@@ -34,15 +34,15 @@ async function execLeaderboard(interaction, cfg) {
   return interaction.reply({ content: `📌 ${cfg.label} leaderboard posted! It will auto-update whenever wins change.`, flags: 64 });
 }
 
-function execAdd(interaction, cfg) {
+async function execAdd(interaction, cfg) {
   const guildId = interaction.guildId;
   const user = interaction.options.getUser('user');
   const amount = interaction.options.getInteger('amount') ?? 1;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
   board.users[user.id].wins += amount;
-  saveData(guildId, data);
+  await saveData(guildId, data);
   refreshLeaderboardMessage(interaction.client, board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   return interaction.reply({
     content: `✅ Added **${amount}** ${cfg.label} win${amount === 1 ? '' : 's'} to <@${user.id}>. They now have **${board.users[user.id].wins}** total.`,
@@ -50,15 +50,15 @@ function execAdd(interaction, cfg) {
   });
 }
 
-function execRemove(interaction, cfg) {
+async function execRemove(interaction, cfg) {
   const guildId = interaction.guildId;
   const user = interaction.options.getUser('user');
   const amount = interaction.options.getInteger('amount') ?? 1;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
   board.users[user.id].wins = Math.max(0, board.users[user.id].wins - amount);
-  saveData(guildId, data);
+  await saveData(guildId, data);
   refreshLeaderboardMessage(interaction.client, board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   return interaction.reply({
     content: `✅ Removed **${amount}** ${cfg.label} win${amount === 1 ? '' : 's'} from <@${user.id}>. They now have **${board.users[user.id].wins}** total.`,
@@ -66,15 +66,15 @@ function execRemove(interaction, cfg) {
   });
 }
 
-function execSet(interaction, cfg) {
+async function execSet(interaction, cfg) {
   const guildId = interaction.guildId;
   const user = interaction.options.getUser('user');
   const amount = interaction.options.getInteger('amount');
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
   board.users[user.id].wins = amount;
-  saveData(guildId, data);
+  await saveData(guildId, data);
   refreshLeaderboardMessage(interaction.client, board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   return interaction.reply({ content: `✅ Set <@${user.id}>'s ${cfg.label} wins to **${amount}**.`, flags: 64 });
 }
@@ -136,7 +136,7 @@ async function execBotwStats(interaction) {
 
 async function execBotwRoll(interaction) {
   const guildId = interaction.guildId;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const history = data.botwHistory ?? [];
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);
@@ -196,7 +196,7 @@ async function execSotwStats(interaction) {
 
 async function execSotwRoll(interaction) {
   const guildId = interaction.guildId;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const history = data.sotwHistory ?? [];
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);

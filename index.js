@@ -84,7 +84,7 @@ client.once('clientReady', () => {
       const channel = await client.channels.fetch(cfg.poll_channel_id).catch(() => null);
       if (!channel) continue;
       try {
-        const guildData = loadData(cfg.guild_id);
+        const guildData = await loadData(cfg.guild_id);
         await rollPollToChannel('botw', cfg.guild_id, channel, guildData);
         await rollPollToChannel('sotw', cfg.guild_id, channel, guildData);
         await supabase.from('guild_config').update({ last_auto_roll_date: today }).eq('guild_id', cfg.guild_id);
