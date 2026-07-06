@@ -118,8 +118,11 @@ client.once('clientReady', () => {
     console.error(`[retro] Startup parse failed: ${err.message}`)
   ), 3000);
   setTimeout(() => retroScanIngameActivity().catch(err =>
-    console.error(`[activity] Retro scan failed: ${err.message}`)
+    console.error(`[activity] Retro ingame scan failed: ${err.message}`)
   ), 10_000);
+  setTimeout(() => retroScanDiscordActivity().catch(err =>
+    console.error(`[activity] Retro Discord scan failed: ${err.message}`)
+  ), 15_000);
   setTimeout(() => syncWomGroup(), 60_000);
   setInterval(() => syncWomGroup(), 3_600_000);
 });
@@ -697,6 +700,32 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
+
+async function retroScanDiscordActivity() {
+  for (const [guildId, guild] of client.guilds.cache) {
+    const data = await loadData(guildId);
+    if (data.discordRetroScanned) continue;
+
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const afterSnowflake = dateToSnowflake(ninetyDaysAgo);
+    let total = 0;
+
+    for (const [, channel] of guild.channels.cache) {
+      if (channel.type !== 0) continue; // text channels only
+      const messages = await fetchMessagesAfter(channel.id, afterSnowflake);
+      for (const msg of messages) {
+        if (msg.author?.bot || msg.webhookId) continue;
+        const displayName = msg.member?.displayName ?? msg.author?.username ?? 'Unknown';
+        await logDiscordMessage(guildId, msg.author.id, displayName);
+        total++;
+      }
+    }
+
+    data.discordRetroScanned = true;
+    await saveData(guildId, data);
+    console.log(`[activity] Retro Discord scan guild ${guildId}: ${total} messages`);
+  }
+}
 
 async function retroScanIngameActivity() {
   const { data: configs } = await supabase.from('guild_config')
