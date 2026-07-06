@@ -428,8 +428,8 @@ client.on('messageCreate', async message => {
 
   const guildId = message.guildId;
 
-  // Track Discord message activity (all non-bot, non-webhook messages)
-  if (!message.author?.bot && !message.webhookId) {
+  // Track Discord message activity (clan guild only)
+  if (!message.author?.bot && !message.webhookId && guildId === process.env.CLAN_GUILD_ID) {
     const displayName = message.member?.displayName ?? message.author?.username ?? 'Unknown';
     logDiscordMessage(guildId, message.author.id, displayName).catch(() => {});
   }
@@ -702,29 +702,33 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
 
 
 async function retroScanDiscordActivity() {
-  for (const [guildId, guild] of client.guilds.cache) {
-    const data = await loadData(guildId);
-    if (data.discordRetroScanned) continue;
+  const guildId = process.env.CLAN_GUILD_ID;
+  if (!guildId) return;
 
-    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-    const afterSnowflake = dateToSnowflake(ninetyDaysAgo);
-    let total = 0;
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) return;
 
-    for (const [, channel] of guild.channels.cache) {
-      if (channel.type !== 0) continue; // text channels only
-      const messages = await fetchMessagesAfter(channel.id, afterSnowflake);
-      for (const msg of messages) {
-        if (msg.author?.bot || msg.webhookId) continue;
-        const displayName = msg.member?.displayName ?? msg.author?.username ?? 'Unknown';
-        await logDiscordMessage(guildId, msg.author.id, displayName);
-        total++;
-      }
+  const data = await loadData(guildId);
+  if (data.discordRetroScanned) return;
+
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const afterSnowflake = dateToSnowflake(ninetyDaysAgo);
+  let total = 0;
+
+  for (const [, channel] of guild.channels.cache) {
+    if (channel.type !== 0) continue;
+    const messages = await fetchMessagesAfter(channel.id, afterSnowflake);
+    for (const msg of messages) {
+      if (msg.author?.bot || msg.webhookId) continue;
+      const displayName = msg.member?.displayName ?? msg.author?.username ?? 'Unknown';
+      await logDiscordMessage(guildId, msg.author.id, displayName);
+      total++;
     }
-
-    data.discordRetroScanned = true;
-    await saveData(guildId, data);
-    console.log(`[activity] Retro Discord scan guild ${guildId}: ${total} messages`);
   }
+
+  data.discordRetroScanned = true;
+  await saveData(guildId, data);
+  console.log(`[activity] Retro Discord scan guild ${guildId}: ${total} messages`);
 }
 
 async function retroScanIngameActivity() {
