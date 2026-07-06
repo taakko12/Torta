@@ -6,6 +6,7 @@ const { findGuildByCode } = require('./trackscapeStorage');
 const { extractBroadcast, stripTags } = require('./broadcastExtractor');
 const { recordDrop } = require('./dropStorage');
 const { recordDeath } = require('./plankStorage');
+const { logIngameMessage } = require('./activityStorage');
 
 // verificationCode → Set<WebSocket>
 const rooms = new Map();
@@ -143,6 +144,7 @@ function startTrackscapeServer(discordClient, port = 3000) {
         }
       } else {
         if (!guild.clanChatChannelId) continue;
+        logIngameMessage(guild.guildId, sender).catch(() => {});
         const embed = new EmbedBuilder()
           .setAuthor({ name: `${isLeague ? '[Leagues] ' : ''}${sender} (${rank || 'Member'})` })
           .setDescription(cleanMsg)

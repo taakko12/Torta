@@ -15,6 +15,7 @@ const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pol
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
 const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
+const { logDiscordMessage, logIngameMessage } = require('./utils/activityStorage');
 const { recordAchievement } = require('./utils/achievementStorage');
 const { loadData } = require('./utils/storage');
 const supabase = require('./utils/supabase');
@@ -116,6 +117,9 @@ client.once('clientReady', () => {
   setTimeout(() => retroParseAllGuilds().catch(err =>
     console.error(`[retro] Startup parse failed: ${err.message}`)
   ), 3000);
+  setTimeout(() => retroScanIngameActivity().catch(err =>
+    console.error(`[activity] Retro scan failed: ${err.message}`)
+  ), 10_000);
   setTimeout(() => syncWomGroup(), 60_000);
   setInterval(() => syncWomGroup(), 3_600_000);
 });
@@ -421,6 +425,12 @@ client.on('messageCreate', async message => {
 
   const guildId = message.guildId;
 
+  // Track Discord message activity (all non-bot, non-webhook messages)
+  if (!message.author?.bot && !message.webhookId) {
+    const displayName = message.member?.displayName ?? message.author?.username ?? 'Unknown';
+    logDiscordMessage(guildId, message.author.id, displayName).catch(() => {});
+  }
+
   // Relay regular Discord messages to in-game clan chat via TrackScape WebSocket
   if (!message.webhookId && !message.author?.bot && message.content) {
     const tsConfig = await loadTrackscape(guildId);
@@ -687,6 +697,31 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
+
+async function retroScanIngameActivity() {
+  const { data: configs } = await supabase.from('guild_config')
+    .select('guild_id, clanchat_channel_id')
+    .not('clanchat_channel_id', 'is', null);
+
+  for (const cfg of configs ?? []) {
+    try {
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const messages = await fetchMessagesAfter(cfg.clanchat_channel_id, dateToSnowflake(ninetyDaysAgo));
+      let counted = 0;
+      for (const msg of messages) {
+        for (const embed of msg.embeds ?? []) {
+          if (!embed.author?.name) continue;
+          // Format: "[Leagues] RSN (Rank)" — extract RSN
+          const rsn = embed.author.name.replace(/^\[Leagues\] /, '').replace(/ \([^)]+\)$/, '').trim();
+          if (rsn) { await logIngameMessage(cfg.guild_id, rsn); counted++; }
+        }
+      }
+      console.log(`[activity] Retro ingame scan guild ${cfg.guild_id}: ${counted} messages`);
+    } catch (err) {
+      console.error(`[activity] Retro scan failed for guild ${cfg.guild_id}: ${err.message}`);
+    }
+  }
+}
 
 async function syncWomGroup() {
   const groupId = process.env.WOM_GROUP_ID
