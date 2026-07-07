@@ -227,12 +227,15 @@ CREATE TABLE IF NOT EXISTS vc_activity (
 );
 
 CREATE TABLE IF NOT EXISTS rsn_links (
-  discord_id text NOT NULL,
-  guild_id   text NOT NULL,
-  rsn        text NOT NULL,
-  linked_at  timestamptz DEFAULT now(),
-  PRIMARY KEY (discord_id, guild_id)
+  discord_id  text NOT NULL,
+  guild_id    text NOT NULL,
+  rsn         text NOT NULL,
+  linked_at   timestamptz DEFAULT now(),
+  primary_rsn boolean NOT NULL DEFAULT true,
+  PRIMARY KEY (discord_id, guild_id, rsn)
 );
+-- Enforce at most one primary RSN per user per guild
+-- CREATE UNIQUE INDEX rsn_links_one_primary ON rsn_links (discord_id, guild_id) WHERE primary_rsn = true;
 
 ALTER TABLE discord_activity ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ingame_activity  ENABLE ROW LEVEL SECURITY;
