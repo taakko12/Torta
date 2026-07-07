@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { renamePlayer: renameDrops, saveNameChange } = require('../utils/dropStorage');
 const { renamePlayer: renamePlanks } = require('../utils/plankStorage');
 const { loadLoot, saveLoot } = require('../utils/lootStorage');
+const supabase = require('../utils/supabase');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -43,6 +44,14 @@ module.exports = {
       changes.push(`Loot review queue: updated pending entries to **${newName}**`);
       saveLoot(guildId, loot);
     }
+
+    // Update rsn_links if this RSN is linked to a Discord user
+    const { data: updated } = await supabase.from('rsn_links')
+      .update({ rsn: newName })
+      .eq('guild_id', guildId)
+      .ilike('rsn', oldName)
+      .select('discord_id')
+    if (updated?.length) changes.push(`RSN link: updated **${updated.length}** linked Discord account${updated.length === 1 ? '' : 's'} to **${newName}**`);
 
     if (changes.length === 0) {
       return interaction.reply({
