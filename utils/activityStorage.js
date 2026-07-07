@@ -1,7 +1,7 @@
 const supabase = require('./supabase')
 
-async function logDiscordMessage(guildId, discordId, displayName) {
-  await supabase.rpc('log_discord_message', { p_guild: guildId, p_user: discordId, p_name: displayName })
+async function logDiscordMessage(guildId, discordId, displayName, roleName = null) {
+  await supabase.rpc('log_discord_message', { p_guild: guildId, p_user: discordId, p_name: displayName, p_role: roleName })
 }
 
 async function logIngameMessage(guildId, rsn) {

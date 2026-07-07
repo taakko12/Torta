@@ -431,7 +431,8 @@ client.on('messageCreate', async message => {
   // Track Discord message activity (clan guild only)
   if (!message.author?.bot && !message.webhookId && guildId === process.env.CLAN_GUILD_ID) {
     const displayName = message.member?.displayName ?? message.author?.username ?? 'Unknown';
-    logDiscordMessage(guildId, message.author.id, displayName).catch(() => {});
+    const topRole = message.member?.roles?.cache?.filter(r => r.name !== '@everyone')?.sort((a, b) => b.position - a.position)?.first()?.name ?? null;
+    logDiscordMessage(guildId, message.author.id, displayName, topRole).catch(() => {});
   }
 
   // Relay regular Discord messages to in-game clan chat via TrackScape WebSocket
