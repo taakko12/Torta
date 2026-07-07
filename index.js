@@ -148,6 +148,19 @@ client.once('clientReady', () => {
     }
   }
 
+  // Flush active VC sessions to DB every 5 minutes
+  setInterval(() => {
+    const now = Date.now();
+    for (const [userId, session] of vcSessions) {
+      const lastFlushed = session.lastFlushed ?? session.joinedAt;
+      const minutes = Math.floor((now - lastFlushed) / 60_000);
+      if (minutes > 0) {
+        logVcTime(session.guildId, userId, session.displayName, session.roleName, minutes).catch(() => {});
+        session.lastFlushed = now;
+      }
+    }
+  }, 300_000);
+
   // Monthly reset: zero out month counts on the 1st at midnight UTC
   setInterval(async () => {
     const now = new Date();
@@ -593,7 +606,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   } else if (left) {
     const session = vcSessions.get(userId);
     if (session) {
-      const minutes = Math.floor((Date.now() - session.joinedAt) / 60_000);
+      const since = session.lastFlushed ?? session.joinedAt;
+      const minutes = Math.floor((Date.now() - since) / 60_000);
       if (minutes > 0) logVcTime(guildId, userId, session.displayName, session.roleName, minutes).catch(() => {});
       vcSessions.delete(userId);
     }
