@@ -421,3 +421,25 @@ CREATE POLICY "public read bingo_tasks"        ON bingo_tasks        FOR SELECT 
 CREATE POLICY "public read bingo_teams"        ON bingo_teams        FOR SELECT USING (true);
 CREATE POLICY "public read bingo_team_members" ON bingo_team_members FOR SELECT USING (true);
 CREATE POLICY "public read bingo_submissions"  ON bingo_submissions  FOR SELECT USING (true);
+
+-- =====================================================================
+-- Raid Guides (imported from Discord forum threads)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS raid_guides (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id         text NOT NULL,
+  title            text NOT NULL,
+  content          text NOT NULL DEFAULT '',
+  thread_id        text,
+  forum_channel_id text,
+  created_at       timestamptz DEFAULT now(),
+  updated_at       timestamptz DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS raid_guides_thread_dedup
+  ON raid_guides (guild_id, thread_id)
+  WHERE thread_id IS NOT NULL;
+
+ALTER TABLE raid_guides ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read raid_guides" ON raid_guides FOR SELECT USING (true);
