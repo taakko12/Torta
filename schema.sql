@@ -183,15 +183,133 @@ GRANT EXECUTE ON FUNCTION monthly_plank_leaderboard(text) TO anon;
 GRANT EXECUTE ON FUNCTION alltime_plank_leaderboard(text) TO anon;
 
 -- =====================================================================
--- Seed: guild config only.
--- Drop/plank data is populated automatically on bot startup via
--- retroParseGuild(), which scans channel history for the current month.
--- Run /lootboard scrape to import full all-time channel history.
+-- No seed data needed — channel IDs are set via /lootboard setchannel,
+-- /plankboard setchannel, and the admin settings panel on the website.
 -- =====================================================================
 
-INSERT INTO guild_config (guild_id, drops_channel_id, planks_channel_id)
-VALUES ('1507110016342167622', '1514356163569782944', '1513189530264670248')
-ON CONFLICT (guild_id) DO NOTHING;
+-- =====================================================================
+-- Activity tracking (Discord messages, in-game clan chat, voice channel)
+-- =====================================================================
+
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS inactivity_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS recap_channel_id       text;
+
+CREATE TABLE IF NOT EXISTS discord_activity (
+  guild_id         text NOT NULL,
+  discord_id       text NOT NULL,
+  display_name     text,
+  role_name        text,
+  promotion_note   text,
+  message_count    int  NOT NULL DEFAULT 0,
+  month_count      int  NOT NULL DEFAULT 0,
+  last_message_at  timestamptz,
+  PRIMARY KEY (guild_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS ingame_activity (
+  guild_id        text NOT NULL,
+  rsn             text NOT NULL,
+  message_count   int  NOT NULL DEFAULT 0,
+  month_count     int  NOT NULL DEFAULT 0,
+  last_message_at timestamptz,
+  PRIMARY KEY (guild_id, rsn)
+);
+
+CREATE TABLE IF NOT EXISTS vc_activity (
+  guild_id      text NOT NULL,
+  discord_id    text NOT NULL,
+  display_name  text,
+  role_name     text,
+  total_minutes int  NOT NULL DEFAULT 0,
+  month_minutes int  NOT NULL DEFAULT 0,
+  last_seen_at  timestamptz,
+  PRIMARY KEY (guild_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS rsn_links (
+  discord_id text NOT NULL,
+  guild_id   text NOT NULL,
+  rsn        text NOT NULL,
+  linked_at  timestamptz DEFAULT now(),
+  PRIMARY KEY (discord_id, guild_id)
+);
+
+ALTER TABLE discord_activity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingame_activity  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vc_activity      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rsn_links        ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "public read discord_activity" ON discord_activity FOR SELECT USING (true);
+CREATE POLICY "public read ingame_activity"  ON ingame_activity  FOR SELECT USING (true);
+CREATE POLICY "public read vc_activity"      ON vc_activity      FOR SELECT USING (true);
+
+-- Atomic increment functions called by the bot
+CREATE OR REPLACE FUNCTION log_discord_message(p_guild text, p_user text, p_name text, p_role text)
+RETURNS void AS $$
+  INSERT INTO discord_activity (guild_id, discord_id, display_name, role_name, message_count, month_count, last_message_at)
+  VALUES (p_guild, p_user, p_name, p_role, 1, 1, now())
+  ON CONFLICT (guild_id, discord_id) DO UPDATE SET
+    display_name    = EXCLUDED.display_name,
+    role_name       = COALESCE(EXCLUDED.role_name, discord_activity.role_name),
+    message_count   = discord_activity.message_count + 1,
+    month_count     = discord_activity.month_count + 1,
+    last_message_at = now();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION log_ingame_message(p_guild text, p_rsn text)
+RETURNS void AS $$
+  INSERT INTO ingame_activity (guild_id, rsn, message_count, month_count, last_message_at)
+  VALUES (p_guild, p_rsn, 1, 1, now())
+  ON CONFLICT (guild_id, rsn) DO UPDATE SET
+    message_count   = ingame_activity.message_count + 1,
+    month_count     = ingame_activity.month_count + 1,
+    last_message_at = now();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION log_vc_time(p_guild text, p_user text, p_name text, p_role text, p_minutes int)
+RETURNS void AS $$
+  INSERT INTO vc_activity (guild_id, discord_id, display_name, role_name, total_minutes, month_minutes, last_seen_at)
+  VALUES (p_guild, p_user, p_name, p_role, p_minutes, p_minutes, now())
+  ON CONFLICT (guild_id, discord_id) DO UPDATE SET
+    display_name  = EXCLUDED.display_name,
+    role_name     = COALESCE(EXCLUDED.role_name, vc_activity.role_name),
+    total_minutes = vc_activity.total_minutes + p_minutes,
+    month_minutes = vc_activity.month_minutes + p_minutes,
+    last_seen_at  = now();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- =====================================================================
+-- Clan events + RSVPs
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS clan_events (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id              text NOT NULL,
+  title                 text NOT NULL,
+  description           text,
+  event_type            text NOT NULL DEFAULT 'Event',
+  scheduled_at          timestamptz,
+  channel_id            text,
+  message_id            text,
+  created_by_discord_id text,
+  created_at            timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS event_rsvps (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id     uuid REFERENCES clan_events(id) ON DELETE CASCADE,
+  discord_id   text NOT NULL,
+  display_name text,
+  response     text NOT NULL DEFAULT 'going',
+  rsvped_at    timestamptz DEFAULT now(),
+  UNIQUE (event_id, discord_id)
+);
+
+ALTER TABLE clan_events  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_rsvps  ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "public read clan_events"  ON clan_events  FOR SELECT USING (true);
+CREATE POLICY "public read event_rsvps"  ON event_rsvps  FOR SELECT USING (true);
 
 -- =====================================================================
 -- Bingo system
