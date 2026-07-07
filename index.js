@@ -806,10 +806,11 @@ async function postWeeklyRecap() {
   const { data: cfg } = await supabase.from('guild_config').select('recap_channel_id').eq('guild_id', guildId).maybeSingle();
   if (!cfg?.recap_channel_id) return;
 
-  const [{ data: discord }, { data: ingame }, { data: vc }] = await Promise.all([
+  const [{ data: discord }, { data: ingame }, { data: vc }, { data: topLoot }] = await Promise.all([
     supabase.from('discord_activity').select('display_name, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3),
     supabase.from('ingame_activity').select('rsn, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3),
     supabase.from('vc_activity').select('display_name, month_minutes').eq('guild_id', guildId).order('month_minutes', { ascending: false }).limit(3),
+    supabase.from('drops').select('player_name, gp_value, item_name').eq('guild_id', guildId).gte('recorded_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('gp_value', { ascending: false }).limit(3),
   ]);
 
   const medals = ['🥇', '🥈', '🥉'];
@@ -819,7 +820,7 @@ async function postWeeklyRecap() {
   const channel = await client.channels.fetch(cfg.recap_channel_id).catch(() => null);
   if (!channel) return;
 
-  await channel.send({ embeds: [new EmbedBuilder()
+  const embeds = [new EmbedBuilder()
     .setTitle('📊 Weekly Activity Recap')
     .setColor(0x7c5ce8)
     .addFields(
@@ -828,8 +829,15 @@ async function postWeeklyRecap() {
       { name: '🔊 Most VC Time', value: fmtRows(vc, 'display_name', 'month_minutes', 'min'), inline: true },
     )
     .setFooter({ text: 'Based on activity so far this month' })
-    .setTimestamp()
-  ] });
+  ];
+
+  if (topLoot?.length) {
+    const lootLines = topLoot.map((d, i) => `${medals[i]} **${d.player_name}** — ${d.item_name ?? 'drop'} (${Number(d.gp_value).toLocaleString()} gp)`).join('\n');
+    embeds.push(new EmbedBuilder().setTitle('💰 Top Drops This Week').setDescription(lootLines).setColor(0xc89b3c));
+  }
+
+  embeds[embeds.length - 1].setTimestamp();
+  await channel.send({ embeds });
   console.log('[recap] Weekly recap posted');
 }
 
@@ -846,13 +854,11 @@ async function postModeratorRecap() {
     { data: allLinks },
     { data: allDiscord },
     { data: allIngame },
-    { data: topLoot },
   ] = await Promise.all([
     supabase.from('discord_activity').select('display_name, role_name, last_message_at').eq('guild_id', guildId).eq('month_count', 0).order('last_message_at', { ascending: true, nullsFirst: true }).limit(20),
     supabase.from('rsn_links').select('discord_id, rsn').eq('guild_id', guildId),
     supabase.from('discord_activity').select('discord_id, display_name').eq('guild_id', guildId),
     supabase.from('ingame_activity').select('rsn').eq('guild_id', guildId),
-    supabase.from('drops').select('player_name, gp_value, item_name').eq('guild_id', guildId).gte('recorded_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('gp_value', { ascending: false }).limit(3),
   ]);
 
   const linkedDiscordIds = new Set((allLinks ?? []).map(l => l.discord_id));
@@ -884,15 +890,6 @@ async function postModeratorRecap() {
       .setTitle('🔗 Unlinked Members')
       .setDescription(unlinkLines.join('\n\n'))
       .setColor(0xc89b3c));
-  }
-
-  // Top drops this week
-  if (topLoot?.length) {
-    const lootLines = topLoot.map((d, i) => `${['🥇','🥈','🥉'][i]} **${d.player_name}** — ${d.item_name ?? 'drop'} (${Number(d.gp_value).toLocaleString()} gp)`).join('\n');
-    embeds.push(new EmbedBuilder()
-      .setTitle('💰 Top Drops This Week')
-      .setDescription(lootLines)
-      .setColor(0x57F287));
   }
 
   if (!embeds.length) return;
