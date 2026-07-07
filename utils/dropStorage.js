@@ -27,7 +27,10 @@ async function setDropsChannel(guildId, channelId) {
 
 // ── Write ────────────────────────────────────────────────────────────────────
 
+const MIN_DROP_GP = 1_000_000;
+
 async function recordDrop(guildId, playerName, gpValue, itemName = null, imageUrl = null, screenshotUrl = null, messageId = null, embedIndex = 0, timestamp = null) {
+  if (gpValue < MIN_DROP_GP) return;
   const name = normalizeName(playerName);
 
   // Cross-source dedup (Dink vs TrackScape plugin): look for a recent drop

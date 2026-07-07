@@ -165,7 +165,7 @@ client.once('clientReady', () => {
   setInterval(async () => {
     const now = new Date();
     if (now.getUTCDay() === 0 && now.getUTCHours() === 20) postWeeklyRecap().catch(e => console.error(`[recap] ${e.message}`));
-    if (now.getUTCDay() === 1 && now.getUTCHours() === 9) postInactivityAlerts().catch(e => console.error(`[activity] ${e.message}`));
+    if (now.getUTCDay() === 1 && now.getUTCHours() === 9) postModeratorRecap().catch(e => console.error(`[modrecap] ${e.message}`));
   }, 3_600_000);
 
   // Monthly reset: zero out month counts on the 1st at midnight UTC
@@ -833,36 +833,72 @@ async function postWeeklyRecap() {
   console.log('[recap] Weekly recap posted');
 }
 
-async function postInactivityAlerts() {
+async function postModeratorRecap() {
   const guildId = process.env.CLAN_GUILD_ID;
   if (!guildId) return;
   const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
   if (!cfg?.inactivity_channel_id) return;
-
-  const { data: inactive } = await supabase.from('discord_activity')
-    .select('display_name, role_name, last_message_at')
-    .eq('guild_id', guildId)
-    .eq('month_count', 0)
-    .order('last_message_at', { ascending: true, nullsFirst: true })
-    .limit(25);
-
-  if (!inactive?.length) return;
   const channel = await client.channels.fetch(cfg.inactivity_channel_id).catch(() => null);
   if (!channel) return;
 
-  const lines = inactive.map(m => {
-    const last = m.last_message_at ? new Date(m.last_message_at).toLocaleDateString('en-GB') : 'never';
-    return `• **${m.display_name}** (${m.role_name ?? 'Unknown'}) — last seen ${last}`;
-  }).join('\n');
+  const [
+    { data: inactive },
+    { data: allLinks },
+    { data: allDiscord },
+    { data: allIngame },
+    { data: topLoot },
+  ] = await Promise.all([
+    supabase.from('discord_activity').select('display_name, role_name, last_message_at').eq('guild_id', guildId).eq('month_count', 0).order('last_message_at', { ascending: true, nullsFirst: true }).limit(20),
+    supabase.from('rsn_links').select('discord_id, rsn').eq('guild_id', guildId),
+    supabase.from('discord_activity').select('discord_id, display_name').eq('guild_id', guildId),
+    supabase.from('ingame_activity').select('rsn').eq('guild_id', guildId),
+    supabase.from('drops').select('player_name, gp_value, item_name').eq('guild_id', guildId).gte('recorded_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('gp_value', { ascending: false }).limit(3),
+  ]);
 
-  await channel.send({ embeds: [new EmbedBuilder()
-    .setTitle('⚠️ Inactive Members This Month')
-    .setDescription(lines)
-    .setColor(0xED4245)
-    .setFooter({ text: `${inactive.length} members with 0 Discord messages this month` })
-    .setTimestamp()
-  ] });
-  console.log(`[activity] Inactivity alert posted: ${inactive.length} members`);
+  const linkedDiscordIds = new Set((allLinks ?? []).map(l => l.discord_id));
+  const linkedRsns = new Set((allLinks ?? []).map(l => l.rsn.toLowerCase()));
+  const unlinkedDiscord = (allDiscord ?? []).filter(d => !linkedDiscordIds.has(d.discord_id));
+  const unlinkedIngame = (allIngame ?? []).filter(i => !linkedRsns.has(i.rsn.toLowerCase()));
+
+  const embeds = [];
+
+  // Inactive members
+  if (inactive?.length) {
+    const lines = inactive.map(m => {
+      const last = m.last_message_at ? new Date(m.last_message_at).toLocaleDateString('en-GB') : 'never';
+      return `• **${m.display_name}** (${m.role_name ?? 'Unknown'}) — last seen ${last}`;
+    }).join('\n');
+    embeds.push(new EmbedBuilder()
+      .setTitle('⚠️ Inactive Members This Month')
+      .setDescription(lines)
+      .setColor(0xED4245)
+      .setFooter({ text: `${inactive.length} members with 0 Discord messages this month` }));
+  }
+
+  // Unlinked members
+  const unlinkLines = [];
+  if (unlinkedDiscord.length) unlinkLines.push(`**Discord → no RSN (${unlinkedDiscord.length}):**\n${unlinkedDiscord.slice(0, 15).map(d => `• ${d.display_name ?? d.discord_id}`).join('\n')}`);
+  if (unlinkedIngame.length) unlinkLines.push(`**In-game → no Discord (${unlinkedIngame.length}):**\n${unlinkedIngame.slice(0, 15).map(i => `• ${i.rsn}`).join('\n')}`);
+  if (unlinkLines.length) {
+    embeds.push(new EmbedBuilder()
+      .setTitle('🔗 Unlinked Members')
+      .setDescription(unlinkLines.join('\n\n'))
+      .setColor(0xc89b3c));
+  }
+
+  // Top drops this week
+  if (topLoot?.length) {
+    const lootLines = topLoot.map((d, i) => `${['🥇','🥈','🥉'][i]} **${d.player_name}** — ${d.item_name ?? 'drop'} (${Number(d.gp_value).toLocaleString()} gp)`).join('\n');
+    embeds.push(new EmbedBuilder()
+      .setTitle('💰 Top Drops This Week')
+      .setDescription(lootLines)
+      .setColor(0x57F287));
+  }
+
+  if (!embeds.length) return;
+  embeds[embeds.length - 1].setTimestamp();
+  await channel.send({ content: '📋 **Weekly Moderator Recap**', embeds });
+  console.log(`[modrecap] Posted: ${inactive?.length ?? 0} inactive, ${unlinkedDiscord.length} unlinked Discord, ${unlinkedIngame.length} unlinked RSN`);
 }
 
 async function retroFillDiscordRoles() {
