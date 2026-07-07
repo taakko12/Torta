@@ -161,6 +161,13 @@ client.once('clientReady', () => {
     }
   }, 300_000);
 
+  // Weekly recap (Sunday 8pm UTC) + inactivity alerts (Monday 9am UTC)
+  setInterval(async () => {
+    const now = new Date();
+    if (now.getUTCDay() === 0 && now.getUTCHours() === 20) postWeeklyRecap().catch(e => console.error(`[recap] ${e.message}`));
+    if (now.getUTCDay() === 1 && now.getUTCHours() === 9) postInactivityAlerts().catch(e => console.error(`[activity] ${e.message}`));
+  }, 3_600_000);
+
   // Monthly reset: zero out month counts on the 1st at midnight UTC
   setInterval(async () => {
     const now = new Date();
@@ -466,6 +473,21 @@ client.on('interactionCreate', async interaction => {
       embeds: [buildRaidEmbed(raid)],
       components: buildRaidButtons(raidId)
     }).catch(err => console.error(`[button] Failed to update raid embed: ${err.message}`));
+
+    return;
+  }
+
+  if (action === 'rsvp') {
+    const [eventId, response] = payload.split(':');
+    const userId = interaction.user.id;
+    const displayName = interaction.member?.displayName ?? interaction.user.username;
+    if (response === 'going') {
+      await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName }, { onConflict: 'event_id,discord_id' });
+      return interaction.reply({ content: "✅ You're going! See you there.", flags: 64 });
+    } else {
+      await supabase.from('event_rsvps').delete().eq('event_id', eventId).eq('discord_id', userId);
+      return interaction.reply({ content: "Got it, you won't be attending.", flags: 64 });
+    }
   }
 });
 
@@ -773,6 +795,71 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
+
+async function postWeeklyRecap() {
+  const guildId = process.env.CLAN_GUILD_ID;
+  if (!guildId) return;
+  const { data: cfg } = await supabase.from('guild_config').select('recap_channel_id').eq('guild_id', guildId).maybeSingle();
+  if (!cfg?.recap_channel_id) return;
+
+  const [{ data: discord }, { data: ingame }, { data: vc }] = await Promise.all([
+    supabase.from('discord_activity').select('display_name, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3),
+    supabase.from('ingame_activity').select('rsn, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3),
+    supabase.from('vc_activity').select('display_name, month_minutes').eq('guild_id', guildId).order('month_minutes', { ascending: false }).limit(3),
+  ]);
+
+  const medals = ['🥇', '🥈', '🥉'];
+  const fmtRows = (rows, nameKey, countKey, suffix) =>
+    rows?.length ? rows.map((r, i) => `${medals[i]} **${r[nameKey]}** — ${Number(r[countKey]).toLocaleString()} ${suffix}`).join('\n') : 'No data yet';
+
+  const channel = await client.channels.fetch(cfg.recap_channel_id).catch(() => null);
+  if (!channel) return;
+
+  await channel.send({ embeds: [new EmbedBuilder()
+    .setTitle('📊 Weekly Activity Recap')
+    .setColor(0x7c5ce8)
+    .addFields(
+      { name: '💬 Top Discord Chatters', value: fmtRows(discord, 'display_name', 'month_count', 'msgs'), inline: true },
+      { name: '⚔️ Top In-Game Chatters', value: fmtRows(ingame, 'rsn', 'month_count', 'msgs'), inline: true },
+      { name: '🔊 Most VC Time', value: fmtRows(vc, 'display_name', 'month_minutes', 'min'), inline: true },
+    )
+    .setFooter({ text: 'Based on activity so far this month' })
+    .setTimestamp()
+  ] });
+  console.log('[recap] Weekly recap posted');
+}
+
+async function postInactivityAlerts() {
+  const guildId = process.env.CLAN_GUILD_ID;
+  if (!guildId) return;
+  const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
+  if (!cfg?.inactivity_channel_id) return;
+
+  const { data: inactive } = await supabase.from('discord_activity')
+    .select('display_name, role_name, last_message_at')
+    .eq('guild_id', guildId)
+    .eq('month_count', 0)
+    .order('last_message_at', { ascending: true, nullsFirst: true })
+    .limit(25);
+
+  if (!inactive?.length) return;
+  const channel = await client.channels.fetch(cfg.inactivity_channel_id).catch(() => null);
+  if (!channel) return;
+
+  const lines = inactive.map(m => {
+    const last = m.last_message_at ? new Date(m.last_message_at).toLocaleDateString('en-GB') : 'never';
+    return `• **${m.display_name}** (${m.role_name ?? 'Unknown'}) — last seen ${last}`;
+  }).join('\n');
+
+  await channel.send({ embeds: [new EmbedBuilder()
+    .setTitle('⚠️ Inactive Members This Month')
+    .setDescription(lines)
+    .setColor(0xED4245)
+    .setFooter({ text: `${inactive.length} members with 0 Discord messages this month` })
+    .setTimestamp()
+  ] });
+  console.log(`[activity] Inactivity alert posted: ${inactive.length} members`);
+}
 
 async function retroFillDiscordRoles() {
   const guildId = process.env.CLAN_GUILD_ID;
