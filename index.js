@@ -446,6 +446,24 @@ client.on('interactionCreate', async interaction => {
       return interaction.update({ content: '🗑️ Announcement cancelled.', embeds: [], components: [] });
     }
 
+    if (action === 'rsvp') {
+      const [eventId, response] = payload.split(':');
+      const userId = interaction.user.id;
+      const displayName = interaction.member?.displayName ?? interaction.user.username;
+      try {
+        if (response === 'going') {
+          await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName, response: 'going' }, { onConflict: 'event_id,discord_id' });
+          return interaction.reply({ content: "✅ You're going! See you there.", flags: 64 });
+        } else {
+          await supabase.from('event_rsvps').delete().eq('event_id', eventId).eq('discord_id', userId);
+          return interaction.reply({ content: "Got it, you won't be attending.", flags: 64 });
+        }
+      } catch (err) {
+        console.error(`[rsvp] Failed for event ${eventId}, user ${userId}:`, err.message);
+        return interaction.reply({ content: '❌ Could not save your RSVP. Try again in a moment.', flags: 64 }).catch(() => {});
+      }
+    }
+
     if (action !== 'raid_signup' && action !== 'raid_dropout') return;
     const raidId = payload;
     const guildId = interaction.guildId;
@@ -485,23 +503,6 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
-  if (action === 'rsvp') {
-    const [eventId, response] = payload.split(':');
-    const userId = interaction.user.id;
-    const displayName = interaction.member?.displayName ?? interaction.user.username;
-    try {
-      if (response === 'going') {
-        await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName, response: 'going' }, { onConflict: 'event_id,discord_id' });
-        return interaction.reply({ content: "✅ You're going! See you there.", flags: 64 });
-      } else {
-        await supabase.from('event_rsvps').delete().eq('event_id', eventId).eq('discord_id', userId);
-        return interaction.reply({ content: "Got it, you won't be attending.", flags: 64 });
-      }
-    } catch (err) {
-      console.error(`[rsvp] Failed for event ${eventId}, user ${userId}:`, err.message);
-      return interaction.reply({ content: '❌ Could not save your RSVP. Try again in a moment.', flags: 64 }).catch(() => {});
-    }
-  }
 });
 
 // Watch configured channels for Dink death and loot webhook messages
