@@ -18,6 +18,8 @@ const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
 const { logDiscordMessage, logIngameMessage, logVcTime } = require('./utils/activityStorage');
 
 const vcSessions = new Map(); // discordId -> { joinedAt, guildId, displayName, roleName }
+let lastWomSync = 0;
+let lastVcFlush = 0;
 const { recordAchievement } = require('./utils/achievementStorage');
 const { loadData, saveData } = require('./utils/storage');
 const supabase = require('./utils/supabase');
@@ -77,7 +79,6 @@ client.once('clientReady', () => {
   setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
   setInterval(async () => {
     const now = new Date();
-    if (now.getUTCDay() !== 6 || now.getUTCHours() < 12) return;
     const today = now.toISOString().slice(0, 10);
     const { data: configs } = await supabase.from('guild_config')
       .select('guild_id, poll_channel_id, last_auto_roll_date')
@@ -85,10 +86,13 @@ client.once('clientReady', () => {
     const { rollPollToChannel } = require('./commands/comp');
     for (const cfg of configs ?? []) {
       if (cfg.last_auto_roll_date === today) continue;
+      const guildData = await loadData(cfg.guild_id);
+      const pollDay  = guildData.scheduledJobs?.pollRoll?.day  ?? 6;  // default Saturday
+      const pollHour = guildData.scheduledJobs?.pollRoll?.hour ?? 12; // default 12 UTC
+      if (now.getUTCDay() !== pollDay || now.getUTCHours() < pollHour) continue;
       const channel = await client.channels.fetch(cfg.poll_channel_id).catch(() => null);
       if (!channel) continue;
       try {
-        const guildData = await loadData(cfg.guild_id);
         await rollPollToChannel('botw', cfg.guild_id, channel, guildData);
         await rollPollToChannel('sotw', cfg.guild_id, channel, guildData);
         await supabase.from('guild_config').update({ last_auto_roll_date: today }).eq('guild_id', cfg.guild_id);
@@ -132,8 +136,16 @@ client.once('clientReady', () => {
   setTimeout(() => retroFillMonthCounts().catch(err =>
     console.error(`[activity] Month count backfill failed: ${err.message}`)
   ), 25_000);
-  setTimeout(() => syncWomGroup(), 60_000);
-  setInterval(() => syncWomGroup(), 3_600_000);
+  setTimeout(() => { lastWomSync = Date.now(); syncWomGroup(); }, 60_000);
+  setInterval(async () => {
+    const guildId = process.env.CLAN_GUILD_ID;
+    const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    const intervalMs = (data.scheduledJobs?.womSync?.intervalHours ?? 1) * 3_600_000;
+    if (Date.now() - lastWomSync >= intervalMs) {
+      lastWomSync = Date.now();
+      syncWomGroup().catch(e => console.error(`[wom] sync failed: ${e.message}`));
+    }
+  }, 300_000);
 
   // Seed vcSessions for members already in VC at startup
   const clanGuild = client.guilds.cache.get(process.env.CLAN_GUILD_ID);
@@ -148,8 +160,13 @@ client.once('clientReady', () => {
     }
   }
 
-  // Flush active VC sessions to DB every 5 minutes
-  setInterval(() => {
+  // Flush active VC sessions — interval configurable via website settings
+  setInterval(async () => {
+    const guildId = process.env.CLAN_GUILD_ID;
+    const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    const intervalMs = (data.scheduledJobs?.vcFlush?.intervalMinutes ?? 5) * 60_000;
+    if (Date.now() - lastVcFlush < intervalMs) return;
+    lastVcFlush = Date.now();
     const now = Date.now();
     for (const [userId, session] of vcSessions) {
       const lastFlushed = session.lastFlushed ?? session.joinedAt;
@@ -159,7 +176,7 @@ client.once('clientReady', () => {
         session.lastFlushed = now;
       }
     }
-  }, 300_000);
+  }, 60_000);
 
   // Weekly recap + moderator recap (schedule configurable via website settings)
   setInterval(async () => {
@@ -176,10 +193,14 @@ client.once('clientReady', () => {
     if (now.getUTCDay() === modDay     && now.getUTCHours() === modHour)    postModeratorRecap().catch(e => console.error(`[modrecap] ${e.message}`));
   }, 3_600_000);
 
-  // Monthly reset: zero out month counts on the 1st at midnight UTC
+  // Monthly reset — day/hour configurable via website settings
   setInterval(async () => {
     const now = new Date();
-    if (now.getUTCDate() !== 1 || now.getUTCHours() !== 0) return;
+    const guildId = process.env.CLAN_GUILD_ID;
+    const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    const dayOfMonth = data.scheduledJobs?.monthlyReset?.dayOfMonth ?? 1;
+    const hour       = data.scheduledJobs?.monthlyReset?.hour       ?? 0;
+    if (now.getUTCDate() !== dayOfMonth || now.getUTCHours() !== hour) return;
     await Promise.all([
       supabase.from('discord_activity').update({ month_count: 0 }).gte('month_count', 0),
       supabase.from('ingame_activity').update({ month_count: 0 }).gte('month_count', 0),
