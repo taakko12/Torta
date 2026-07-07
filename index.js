@@ -17,7 +17,7 @@ const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAch
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
 const { logDiscordMessage, logIngameMessage } = require('./utils/activityStorage');
 const { recordAchievement } = require('./utils/achievementStorage');
-const { loadData } = require('./utils/storage');
+const { loadData, saveData } = require('./utils/storage');
 const supabase = require('./utils/supabase');
 
 const DEATH_QUIPS = [
