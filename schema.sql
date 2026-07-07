@@ -242,6 +242,7 @@ ALTER TABLE rsn_links        ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public read discord_activity" ON discord_activity FOR SELECT USING (true);
 CREATE POLICY "public read ingame_activity"  ON ingame_activity  FOR SELECT USING (true);
 CREATE POLICY "public read vc_activity"      ON vc_activity      FOR SELECT USING (true);
+CREATE POLICY "public read rsn_links"        ON rsn_links        FOR SELECT USING (true);
 
 -- Atomic increment functions called by the bot
 CREATE OR REPLACE FUNCTION log_discord_message(p_guild text, p_user text, p_name text, p_role text)
