@@ -123,6 +123,9 @@ client.once('clientReady', () => {
   setTimeout(() => retroScanDiscordActivity().catch(err =>
     console.error(`[activity] Retro Discord scan failed: ${err.message}`)
   ), 15_000);
+  setTimeout(() => retroFillDiscordRoles().catch(err =>
+    console.error(`[activity] Role backfill failed: ${err.message}`)
+  ), 20_000);
   setTimeout(() => syncWomGroup(), 60_000);
   setInterval(() => syncWomGroup(), 3_600_000);
 });
@@ -701,6 +704,36 @@ async function fetchMessagesAfter(channelId, afterSnowflake) {
   return all;
 }
 
+
+async function retroFillDiscordRoles() {
+  const guildId = process.env.CLAN_GUILD_ID;
+  if (!guildId) return;
+
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) return;
+
+  const data = await loadData(guildId);
+  if (data.discordRolesFilled) return;
+
+  const { data: rows } = await supabase.from('discord_activity').select('discord_id').eq('guild_id', guildId);
+  if (!rows?.length) return;
+
+  let updated = 0;
+  for (const { discord_id } of rows) {
+    try {
+      const member = await guild.members.fetch(discord_id);
+      const topRole = member.roles.cache.filter(r => r.name !== '@everyone').sort((a, b) => b.position - a.position).first()?.name ?? null;
+      if (topRole) {
+        await supabase.from('discord_activity').update({ role_name: topRole }).eq('guild_id', guildId).eq('discord_id', discord_id);
+        updated++;
+      }
+    } catch {}
+  }
+
+  data.discordRolesFilled = true;
+  await saveData(guildId, data);
+  console.log(`[activity] Backfilled roles for ${updated} Discord members`);
+}
 
 async function retroScanDiscordActivity() {
   const guildId = process.env.CLAN_GUILD_ID;
