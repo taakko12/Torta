@@ -161,11 +161,19 @@ client.once('clientReady', () => {
     }
   }, 300_000);
 
-  // Weekly recap (Sunday 8pm UTC) + inactivity alerts (Monday 9am UTC)
+  // Weekly recap + moderator recap (schedule configurable via website settings)
   setInterval(async () => {
     const now = new Date();
-    if (now.getUTCDay() === 0 && now.getUTCHours() === 20) postWeeklyRecap().catch(e => console.error(`[recap] ${e.message}`));
-    if (now.getUTCDay() === 1 && now.getUTCHours() === 9) postModeratorRecap().catch(e => console.error(`[modrecap] ${e.message}`));
+    const guildId = process.env.CLAN_GUILD_ID;
+    if (!guildId) return;
+    const data = await loadData(guildId).catch(() => ({}));
+    const jobs = data.scheduledJobs ?? {};
+    const weeklyDay  = jobs.weeklyRecap?.day  ?? 0;  // default Sunday
+    const weeklyHour = jobs.weeklyRecap?.hour ?? 20; // default 8PM UTC
+    const modDay     = jobs.modRecap?.day     ?? 1;  // default Monday
+    const modHour    = jobs.modRecap?.hour    ?? 9;  // default 9AM UTC
+    if (now.getUTCDay() === weeklyDay  && now.getUTCHours() === weeklyHour) postWeeklyRecap().catch(e => console.error(`[recap] ${e.message}`));
+    if (now.getUTCDay() === modDay     && now.getUTCHours() === modHour)    postModeratorRecap().catch(e => console.error(`[modrecap] ${e.message}`));
   }, 3_600_000);
 
   // Monthly reset: zero out month counts on the 1st at midnight UTC
