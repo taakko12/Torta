@@ -312,6 +312,28 @@ CREATE POLICY "public read clan_events"  ON clan_events  FOR SELECT USING (true)
 CREATE POLICY "public read event_rsvps"  ON event_rsvps  FOR SELECT USING (true);
 
 -- =====================================================================
+-- Raids
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS raids (
+  id           text PRIMARY KEY,
+  guild_id     text NOT NULL,
+  name         text NOT NULL,
+  timestamp    bigint NOT NULL,
+  description  text,
+  channel_id   text,
+  message_id   text,
+  signups      jsonb NOT NULL DEFAULT '[]',
+  attendees    jsonb,
+  reminded_24h bool NOT NULL DEFAULT false,
+  reminded_1h  bool NOT NULL DEFAULT false,
+  created_at   timestamptz DEFAULT now()
+);
+
+ALTER TABLE raids ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read raids" ON raids FOR SELECT USING (true);
+
+-- =====================================================================
 -- Bingo system
 -- =====================================================================
 

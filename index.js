@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
-const { loadRaids, updateRaid } = require('./utils/raidStorage');
+const { getRaid, updateRaid, getUpcomingRaids } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
 const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
@@ -333,8 +333,7 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ Only admins can mark a raid as complete.', flags: 64 });
       }
 
-      const data = loadRaids(guildId);
-      const raid = data.raids[raidId];
+      const raid = await getRaid(raidId);
       if (!raid) {
         return interaction.reply({ content: '❌ This raid no longer exists.', flags: 64 });
       }
@@ -342,8 +341,8 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ This raid is already marked complete.', flags: 64 });
       }
 
-      updateRaid(guildId, data, raidId, { attendees: raid.signups });
-      const updatedRaid = data.raids[raidId];
+      await updateRaid(raidId, { attendees: raid.signups });
+      const updatedRaid = { ...raid, attendees: raid.signups };
       await interaction.update({
         embeds: [buildRaidEmbed(updatedRaid)],
         components: buildRaidButtons(raidId, true)
@@ -441,8 +440,7 @@ client.on('interactionCreate', async interaction => {
     const raidId = payload;
     const guildId = interaction.guildId;
 
-    const data = loadRaids(guildId);
-    const raid = data.raids[raidId];
+    const raid = await getRaid(raidId);
     if (!raid) {
       await interaction.reply({ content: '❌ This raid no longer exists.', flags: 64 });
       return;
@@ -467,7 +465,7 @@ client.on('interactionCreate', async interaction => {
       raid.signups = raid.signups.filter(u => u.id !== userId);
     }
 
-    updateRaid(guildId, data, raidId, { signups: raid.signups });
+    await updateRaid(raidId, { signups: raid.signups });
 
     await interaction.update({
       embeds: [buildRaidEmbed(raid)],
@@ -661,32 +659,22 @@ function startReminderLoop() {
 }
 
 async function checkRaidReminders() {
-  const dataDir = path.join(__dirname, 'data');
-  if (!fs.existsSync(dataDir)) return;
-
   const now = Math.floor(Date.now() / 1000);
 
-  for (const guildId of fs.readdirSync(dataDir)) {
-    const dirPath = path.join(dataDir, guildId);
-    if (!fs.statSync(dirPath).isDirectory()) continue;
+  const upcomingRaids = await getUpcomingRaids();
+  for (const raid of upcomingRaids) {
+    const secondsUntil = raid.timestamp - now;
+    const in24h = secondsUntil <= 86400 && secondsUntil > 86100;
+    const in1h  = secondsUntil <= 3600  && secondsUntil > 3300;
 
-    const data = loadRaids(guildId);
-    for (const [raidId, raid] of Object.entries(data.raids)) {
-      if (raid.timestamp <= now) continue;
-
-      const secondsUntil = raid.timestamp - now;
-      const in24h = secondsUntil <= 86400 && secondsUntil > 86100;
-      const in1h  = secondsUntil <= 3600  && secondsUntil > 3300;
-
-      if (in24h && !raid.reminded24h) {
-        console.log(`[reminders] Sending 24h reminder for raid "${raid.name}" in guild ${guildId}`);
-        await sendReminder(raid, '24 hours');
-        updateRaid(guildId, data, raidId, { reminded24h: true });
-      } else if (in1h && !raid.reminded1h) {
-        console.log(`[reminders] Sending 1h reminder for raid "${raid.name}" in guild ${guildId}`);
-        await sendReminder(raid, '1 hour');
-        updateRaid(guildId, data, raidId, { reminded1h: true });
-      }
+    if (in24h && !raid.reminded24h) {
+      console.log(`[reminders] Sending 24h reminder for raid "${raid.name}" in guild ${raid.guildId}`);
+      await sendReminder(raid, '24 hours');
+      await updateRaid(raid.id, { reminded24h: true });
+    } else if (in1h && !raid.reminded1h) {
+      console.log(`[reminders] Sending 1h reminder for raid "${raid.name}" in guild ${raid.guildId}`);
+      await sendReminder(raid, '1 hour');
+      await updateRaid(raid.id, { reminded1h: true });
     }
   }
 }
