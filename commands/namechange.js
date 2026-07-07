@@ -53,6 +53,26 @@ module.exports = {
       .select('discord_id')
     if (updated?.length) changes.push(`RSN link: updated **${updated.length}** linked Discord account${updated.length === 1 ? '' : 's'} to **${newName}**`);
 
+    // Merge ingame_activity (old RSN → new RSN)
+    const { data: oldActivity } = await supabase.from('ingame_activity').select('*').eq('guild_id', guildId).ilike('rsn', oldName).maybeSingle();
+    if (oldActivity) {
+      const { data: newActivity } = await supabase.from('ingame_activity').select('*').eq('guild_id', guildId).ilike('rsn', newName).maybeSingle();
+      if (newActivity) {
+        const latestAt = (!oldActivity.last_message_at || (newActivity.last_message_at && newActivity.last_message_at > oldActivity.last_message_at))
+          ? newActivity.last_message_at : oldActivity.last_message_at;
+        await supabase.from('ingame_activity').update({
+          message_count: newActivity.message_count + oldActivity.message_count,
+          month_count: newActivity.month_count + oldActivity.month_count,
+          last_message_at: latestAt,
+        }).eq('guild_id', guildId).ilike('rsn', newName);
+        await supabase.from('ingame_activity').delete().eq('guild_id', guildId).ilike('rsn', oldName);
+        changes.push(`In-game activity: merged **${oldName}** counts into **${newName}**`);
+      } else {
+        await supabase.from('ingame_activity').update({ rsn: newName }).eq('guild_id', guildId).ilike('rsn', oldName);
+        changes.push(`In-game activity: renamed **${oldName}** → **${newName}**`);
+      }
+    }
+
     if (changes.length === 0) {
       return interaction.reply({
         content: `❌ No data found for **${oldName}** in this server.`,
