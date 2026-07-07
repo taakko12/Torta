@@ -129,6 +129,9 @@ client.once('clientReady', () => {
   setTimeout(() => retroFillDiscordRoles().catch(err =>
     console.error(`[activity] Role backfill failed: ${err.message}`)
   ), 20_000);
+  setTimeout(() => retroFillMonthCounts().catch(err =>
+    console.error(`[activity] Month count backfill failed: ${err.message}`)
+  ), 25_000);
   setTimeout(() => syncWomGroup(), 60_000);
   setInterval(() => syncWomGroup(), 3_600_000);
 
@@ -785,6 +788,56 @@ async function retroFillDiscordRoles() {
   data.discordRolesFilled = true;
   await saveData(guildId, data);
   console.log(`[activity] Backfilled roles for ${updated} Discord members`);
+}
+
+async function retroFillMonthCounts() {
+  const guildId = process.env.CLAN_GUILD_ID;
+  if (!guildId) return;
+
+  const data = await loadData(guildId);
+  if (data.monthCountFilled) return;
+
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) return;
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthSnowflake = dateToSnowflake(monthStart);
+
+  // Discord: count this month's messages per user
+  const discordCounts = new Map();
+  for (const [, channel] of guild.channels.cache) {
+    if (channel.type !== 0) continue;
+    const messages = await fetchMessagesAfter(channel.id, monthSnowflake);
+    for (const msg of messages) {
+      if (msg.author?.bot || msg.webhookId) continue;
+      discordCounts.set(msg.author.id, (discordCounts.get(msg.author.id) ?? 0) + 1);
+    }
+  }
+  for (const [discordId, count] of discordCounts) {
+    await supabase.from('discord_activity').update({ month_count: count }).eq('guild_id', guildId).eq('discord_id', discordId);
+  }
+
+  // In-game: count this month's messages per RSN from clan chat channel
+  const { data: configs } = await supabase.from('guild_config').select('clanchat_channel_id').eq('guild_id', guildId).not('clanchat_channel_id', 'is', null);
+  const ingameCounts = new Map();
+  if (configs?.length) {
+    const messages = await fetchMessagesAfter(configs[0].clanchat_channel_id, monthSnowflake);
+    for (const msg of messages) {
+      for (const embed of msg.embeds ?? []) {
+        if (!embed.author?.name) continue;
+        const rsn = embed.author.name.replace(/^\[Leagues\] /, '').replace(/ \([^)]+\)$/, '').trim().toLowerCase();
+        if (rsn) ingameCounts.set(rsn, (ingameCounts.get(rsn) ?? 0) + 1);
+      }
+    }
+    for (const [rsn, count] of ingameCounts) {
+      await supabase.from('ingame_activity').update({ month_count: count }).eq('guild_id', guildId).eq('rsn', rsn);
+    }
+  }
+
+  data.monthCountFilled = true;
+  await saveData(guildId, data);
+  console.log(`[activity] Month count backfill: ${discordCounts.size} Discord, ${ingameCounts.size} in-game`);
 }
 
 async function retroScanDiscordActivity() {
