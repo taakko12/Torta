@@ -15,7 +15,9 @@ const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pol
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
 const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
-const { logDiscordMessage, logIngameMessage } = require('./utils/activityStorage');
+const { logDiscordMessage, logIngameMessage, logVcTime } = require('./utils/activityStorage');
+
+const vcSessions = new Map(); // discordId -> { joinedAt, guildId, displayName, roleName }
 const { recordAchievement } = require('./utils/achievementStorage');
 const { loadData, saveData } = require('./utils/storage');
 const supabase = require('./utils/supabase');
@@ -49,7 +51,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates
   ]
 });
 client.commands = new Collection();
@@ -128,6 +131,31 @@ client.once('clientReady', () => {
   ), 20_000);
   setTimeout(() => syncWomGroup(), 60_000);
   setInterval(() => syncWomGroup(), 3_600_000);
+
+  // Seed vcSessions for members already in VC at startup
+  const clanGuild = client.guilds.cache.get(process.env.CLAN_GUILD_ID);
+  if (clanGuild) {
+    for (const [, channel] of clanGuild.channels.cache) {
+      if (channel.type !== 2 && channel.type !== 13) continue;
+      for (const [, member] of channel.members) {
+        if (member.user.bot) continue;
+        const topRole = member.roles.cache.filter(r => r.name !== '@everyone').sort((a, b) => b.position - a.position).first()?.name ?? null;
+        vcSessions.set(member.id, { joinedAt: Date.now(), guildId: clanGuild.id, displayName: member.displayName, roleName: topRole });
+      }
+    }
+  }
+
+  // Monthly reset: zero out month counts on the 1st at midnight UTC
+  setInterval(async () => {
+    const now = new Date();
+    if (now.getUTCDate() !== 1 || now.getUTCHours() !== 0) return;
+    await Promise.all([
+      supabase.from('discord_activity').update({ month_count: 0 }).gte('month_count', 0),
+      supabase.from('ingame_activity').update({ month_count: 0 }).gte('month_count', 0),
+      supabase.from('vc_activity').update({ month_minutes: 0 }).gte('month_minutes', 0),
+    ]);
+    console.log('[activity] Monthly counts reset');
+  }, 3_600_000);
 });
 
 client.on('interactionCreate', async interaction => {
@@ -544,6 +572,30 @@ function parseDeathMessage(message) {
   return null;
 }
 
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  const guildId = (newState.guild ?? oldState.guild)?.id;
+  if (guildId !== process.env.CLAN_GUILD_ID) return;
+
+  const member = newState.member ?? oldState.member;
+  if (!member || member.user.bot) return;
+  const userId = member.id;
+
+  const joined = !oldState.channelId && newState.channelId;
+  const left = oldState.channelId && !newState.channelId;
+
+  if (joined) {
+    const topRole = member.roles.cache.filter(r => r.name !== '@everyone').sort((a, b) => b.position - a.position).first()?.name ?? null;
+    vcSessions.set(userId, { joinedAt: Date.now(), guildId, displayName: member.displayName, roleName: topRole });
+  } else if (left) {
+    const session = vcSessions.get(userId);
+    if (session) {
+      const minutes = Math.floor((Date.now() - session.joinedAt) / 60_000);
+      if (minutes > 0) logVcTime(guildId, userId, session.displayName, session.roleName, minutes).catch(() => {});
+      vcSessions.delete(userId);
+    }
+  }
+});
 
 client.on('error', err => console.error(`[discord] Client error: ${err.message}`));
 

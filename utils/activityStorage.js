@@ -8,4 +8,8 @@ async function logIngameMessage(guildId, rsn) {
   await supabase.rpc('log_ingame_message', { p_guild: guildId, p_rsn: rsn.toLowerCase() })
 }
 
-module.exports = { logDiscordMessage, logIngameMessage }
+async function logVcTime(guildId, discordId, displayName, roleName, minutes) {
+  await supabase.rpc('log_vc_time', { p_guild: guildId, p_user: discordId, p_name: displayName, p_role: roleName, p_minutes: minutes })
+}
+
+module.exports = { logDiscordMessage, logIngameMessage, logVcTime }
