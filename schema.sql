@@ -335,6 +335,26 @@ ALTER TABLE raids ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public read raids" ON raids FOR SELECT USING (true);
 
 -- =====================================================================
+-- Command Logs
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS command_logs (
+  id           bigserial PRIMARY KEY,
+  guild_id     text NOT NULL,
+  discord_id   text NOT NULL,
+  display_name text,
+  command      text NOT NULL,
+  subcommand   text,
+  channel_id   text,
+  logged_at    timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS command_logs_guild_idx ON command_logs (guild_id, logged_at DESC);
+ALTER TABLE command_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read command_logs" ON command_logs FOR SELECT USING (true);
+-- Enable realtime: Supabase dashboard → Database → Replication → command_logs ON
+-- Or run: ALTER PUBLICATION supabase_realtime ADD TABLE command_logs;
+
+-- =====================================================================
 -- Bingo system
 -- =====================================================================
 

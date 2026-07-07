@@ -186,6 +186,16 @@ client.on('interactionCreate', async interaction => {
     const command = client.commands.get(interaction.commandName);
     if (!command) return;
 
+    // Non-blocking command log
+    supabase.from('command_logs').insert({
+      guild_id: interaction.guildId,
+      discord_id: interaction.user.id,
+      display_name: interaction.member?.displayName ?? interaction.user.username,
+      command: interaction.commandName,
+      subcommand: (() => { try { return interaction.options.getSubcommand() } catch { return null } })(),
+      channel_id: interaction.channelId,
+    }).then().catch(() => {});
+
     try {
       await command.execute(interaction);
     } catch (err) {
