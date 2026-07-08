@@ -15,7 +15,7 @@ const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pol
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
 const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
-const { logDiscordMessage, logIngameMessage, logVcTime } = require('./utils/activityStorage');
+const { logDiscordMessage, logDiscordMessageAlltime, logIngameMessage, logVcTime } = require('./utils/activityStorage');
 
 const vcSessions = new Map(); // discordId -> { joinedAt, guildId, displayName, roleName }
 let lastWomSync = 0;
@@ -206,6 +206,12 @@ client.once('clientReady', () => {
       supabase.from('ingame_activity').update({ month_count: 0 }).gte('month_count', 0),
       supabase.from('vc_activity').update({ month_minutes: 0 }).gte('month_minutes', 0),
     ]);
+    // Allow month-count backfill to re-run next startup so it can re-correct if needed
+    if (guildId) {
+      const d = await loadData(guildId).catch(() => ({}));
+      d.monthCountFilled = false;
+      await saveData(guildId, d).catch(() => {});
+    }
     console.log('[activity] Monthly counts reset');
   }, 3_600_000);
 });
@@ -1027,7 +1033,7 @@ async function retroScanDiscordActivity() {
     for (const msg of messages) {
       if (msg.author?.bot || msg.webhookId) continue;
       const displayName = msg.member?.displayName ?? msg.author?.username ?? 'Unknown';
-      await logDiscordMessage(guildId, msg.author.id, displayName);
+      await logDiscordMessageAlltime(guildId, msg.author.id, displayName);
       total++;
     }
   }
@@ -1035,6 +1041,9 @@ async function retroScanDiscordActivity() {
   data.discordRetroScanned = true;
   await saveData(guildId, data);
   console.log(`[activity] Retro Discord scan guild ${guildId}: ${total} messages`);
+
+  // Correct month_count now that all rows exist (retro scan only sets message_count)
+  await retroFillMonthCounts();
 }
 
 async function retroScanIngameActivity() {
