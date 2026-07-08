@@ -595,14 +595,14 @@ client.on('messageCreate', async message => {
     const welcome = await loadWelcome(guildId);
     if (welcome.rsnChannelId && message.channelId === welcome.rsnChannelId) {
       await message.delete().catch(() => {});
-      if (!welcome.roleId || message.member?.roles.cache.has(welcome.roleId)) {
-        const rsn = message.content.trim().slice(0, 12);
-        if (rsn) {
-          try { await message.member?.setNickname(rsn); } catch {}
-          await supabase.from('rsn_links').delete().eq('discord_id', message.author.id).eq('guild_id', guildId);
-          await supabase.from('rsn_links').insert({ discord_id: message.author.id, guild_id: guildId, rsn: rsn.toLowerCase() });
-          message.author.send(`✅ Your nickname and RSN have been updated to **${rsn}**.`).catch(() => {});
+      const rsn = message.content.trim().slice(0, 12);
+      if (rsn) {
+        try { await message.member?.setNickname(rsn); } catch (err) {
+          console.error(`[set-rsn] Failed to set nickname for ${message.author.tag}: ${err.message}`);
         }
+        await supabase.from('rsn_links').delete().eq('discord_id', message.author.id).eq('guild_id', guildId);
+        await supabase.from('rsn_links').insert({ discord_id: message.author.id, guild_id: guildId, rsn: rsn.toLowerCase() });
+        message.author.send(`✅ Your nickname and RSN have been updated to **${rsn}**.`).catch(() => {});
       }
       return;
     }
