@@ -1,7 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { getRaid, updateRaid, getUpcomingRaids } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
@@ -277,61 +277,26 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // Welcome / TOS agree button — queue for mod approval
+    // Welcome / TOS agree button — open RSN modal
     if (action === 'welcome_agree') {
-      const guildId = interaction.guildId;
-      const welcome = await loadWelcome(guildId);
-
+      const welcome = await loadWelcome(interaction.guildId);
       if (welcome.roleId && interaction.member.roles.cache.has(welcome.roleId)) {
         return interaction.reply({ content: '✅ You already have the member role!', flags: 64 });
       }
-
-      if (!welcome.modChannelId) {
-        // Fallback: auto-grant if no mod channel configured
-        if (!welcome.roleId) {
-          return interaction.reply({ content: '✅ Rules acknowledged! (Ask an admin to run `/welcome setrole` and `/welcome setmodchannel`.)', flags: 64 });
-        }
-        try {
-          await interaction.member.roles.add(welcome.roleId);
-          return interaction.reply({ content: '✅ Welcome to the clan! You now have full access.', flags: 64 });
-        } catch (err) {
-          console.error(`[welcome] Failed to add role: ${err.message}`);
-          return interaction.reply({ content: '❌ Could not assign your role. Let an admin know.', flags: 64 });
-        }
-      }
-
-      const modChannel = await interaction.client.channels.fetch(welcome.modChannelId).catch(() => null);
-      if (!modChannel) {
-        return interaction.reply({ content: '❌ Mod channel not found. Let an admin know.', flags: 64 });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle('📋 TOS Approval Request')
-        .setColor(0xf1c40f)
-        .addFields(
-          { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
-          { name: 'Agreed at', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-        )
-        .setThumbnail(interaction.user.displayAvatarURL())
-        .setTimestamp();
-
-      const approvalMsg = await modChannel.send({ embeds: [embed], components: [
+      const modal = new ModalBuilder().setCustomId('welcome_rsn_modal').setTitle('One last step');
+      modal.addComponents(
         new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('welcome_modapprove:PLACEHOLDER').setLabel('✅ Approve').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId('welcome_modreject:PLACEHOLDER').setLabel('❌ Reject').setStyle(ButtonStyle.Danger)
+          new TextInputBuilder()
+            .setCustomId('rsn')
+            .setLabel('Your RuneScape username (RSN)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g. Zezima')
+            .setMinLength(1)
+            .setMaxLength(12)
+            .setRequired(true)
         )
-      ]});
-
-      await approvalMsg.edit({ components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`welcome_modapprove:${approvalMsg.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`welcome_modreject:${approvalMsg.id}`).setLabel('❌ Reject').setStyle(ButtonStyle.Danger)
-        )
-      ]});
-
-      addWelcomePending(guildId, welcome, approvalMsg.id, { userId: interaction.user.id });
-
-      return interaction.reply({ content: '✅ Thanks for agreeing to the rules! A mod will review your application shortly.', flags: 64 });
+      );
+      return interaction.showModal(modal);
     }
 
     // Mod approves/rejects a TOS application
@@ -353,14 +318,15 @@ client.on('interactionCreate', async interaction => {
         try {
           const member = await interaction.guild.members.fetch(entry.userId);
           await member.roles.add(welcome.roleId);
-          console.log(`[welcome] Approved ${member.user.tag} by ${interaction.user.tag}`);
+          if (entry.rsn) await member.setNickname(entry.rsn).catch(() => {});
+          console.log(`[welcome] Approved ${member.user.tag} (RSN: ${entry.rsn ?? 'none'}) by ${interaction.user.tag}`);
         } catch (err) {
           console.error(`[welcome] Failed to grant role to ${entry.userId}: ${err.message}`);
         }
         await interaction.client.users.fetch(entry.userId)
-          .then(u => u.send('✅ You\'ve been approved and now have full access to the clan. Welcome!').catch(() => {}))
+          .then(u => u.send(`✅ You've been approved and now have full access to the clan. Welcome, **${entry.rsn ?? 'member'}**!`).catch(() => {}))
           .catch(() => {});
-        return interaction.reply({ content: `✅ Approved <@${entry.userId}>.`, flags: 64 });
+        return interaction.reply({ content: `✅ Approved <@${entry.userId}>${entry.rsn ? ` (${entry.rsn})` : ''}.`, flags: 64 });
       } else {
         await interaction.client.users.fetch(entry.userId)
           .then(u => u.send('❌ Your clan application was not approved at this time. Contact a mod if you have questions.').catch(() => {}))
@@ -538,6 +504,56 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
+  // RSN modal submit (from "I Agree" button)
+  if (interaction.isModalSubmit() && interaction.customId === 'welcome_rsn_modal') {
+    const rsn = interaction.fields.getTextInputValue('rsn').trim();
+    const guildId = interaction.guildId;
+    const welcome = await loadWelcome(guildId);
+
+    try { await interaction.member.setNickname(rsn); } catch {}
+
+    await supabase.from('rsn_links').delete().eq('discord_id', interaction.user.id).eq('guild_id', guildId);
+    await supabase.from('rsn_links').insert({ discord_id: interaction.user.id, guild_id: guildId, rsn: rsn.toLowerCase() });
+
+    if (!welcome.modChannelId) {
+      if (welcome.roleId) await interaction.member.roles.add(welcome.roleId).catch(() => {});
+      return interaction.reply({ content: `✅ RSN set to **${rsn}**! Welcome to the clan.`, flags: 64 });
+    }
+
+    const modChannel = await interaction.client.channels.fetch(welcome.modChannelId).catch(() => null);
+    if (!modChannel) {
+      return interaction.reply({ content: `✅ RSN set to **${rsn}**! Awaiting mod approval.`, flags: 64 });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('📋 New Member Application')
+      .setColor(0xf1c40f)
+      .addFields(
+        { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+        { name: 'RSN', value: rsn, inline: true },
+        { name: 'Applied', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+      )
+      .setThumbnail(interaction.user.displayAvatarURL());
+
+    const approvalMsg = await modChannel.send({ embeds: [embed], components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('welcome_modapprove:PLACEHOLDER').setLabel('✅ Approve').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('welcome_modreject:PLACEHOLDER').setLabel('❌ Reject').setStyle(ButtonStyle.Danger)
+      )
+    ]});
+
+    await approvalMsg.edit({ components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`welcome_modapprove:${approvalMsg.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`welcome_modreject:${approvalMsg.id}`).setLabel('❌ Reject').setStyle(ButtonStyle.Danger)
+      )
+    ]});
+
+    addWelcomePending(guildId, welcome, approvalMsg.id, { userId: interaction.user.id, rsn });
+
+    return interaction.reply({ content: `✅ RSN set to **${rsn}**! A mod will review your application shortly.`, flags: 64 });
+  }
+
 });
 
 function parseIngameRsn(embedAuthorName) {
@@ -573,6 +589,24 @@ client.on('messageCreate', async message => {
   if (!message.guildId) return;
 
   const guildId = message.guildId;
+
+  // #set-rsn channel: update nickname + link from message content (verified members only)
+  if (!message.author?.bot && !message.webhookId) {
+    const welcome = await loadWelcome(guildId);
+    if (welcome.rsnChannelId && message.channelId === welcome.rsnChannelId) {
+      await message.delete().catch(() => {});
+      if (!welcome.roleId || message.member?.roles.cache.has(welcome.roleId)) {
+        const rsn = message.content.trim().slice(0, 12);
+        if (rsn) {
+          try { await message.member?.setNickname(rsn); } catch {}
+          await supabase.from('rsn_links').delete().eq('discord_id', message.author.id).eq('guild_id', guildId);
+          await supabase.from('rsn_links').insert({ discord_id: message.author.id, guild_id: guildId, rsn: rsn.toLowerCase() });
+          message.author.send(`✅ Your nickname and RSN have been updated to **${rsn}**.`).catch(() => {});
+        }
+      }
+      return;
+    }
+  }
 
   // Track Discord message activity (clan guild only)
   if (!message.author?.bot && !message.webhookId && guildId === process.env.CLAN_GUILD_ID) {

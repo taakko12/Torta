@@ -18,13 +18,14 @@ function savePendingJson(guildId, pending) {
 
 async function loadWelcome(guildId) {
   const { data } = await supabase.from('guild_config')
-    .select('welcome_role_id, welcome_mod_channel_id, welcome_channel_id, welcome_message_id')
+    .select('welcome_role_id, welcome_mod_channel_id, welcome_channel_id, welcome_message_id, rsn_channel_id')
     .eq('guild_id', guildId).maybeSingle();
   return {
     roleId: data?.welcome_role_id ?? null,
     modChannelId: data?.welcome_mod_channel_id ?? null,
     channelId: data?.welcome_channel_id ?? null,
     messageId: data?.welcome_message_id ?? null,
+    rsnChannelId: data?.rsn_channel_id ?? null,
     pending: loadPendingJson(guildId),
   };
 }
@@ -36,6 +37,7 @@ async function saveWelcome(guildId, config) {
     welcome_mod_channel_id: config.modChannelId ?? null,
     welcome_channel_id: config.channelId ?? null,
     welcome_message_id: config.messageId ?? null,
+    rsn_channel_id: config.rsnChannelId ?? null,
   }, { onConflict: 'guild_id' });
   savePendingJson(guildId, config.pending ?? {});
 }
