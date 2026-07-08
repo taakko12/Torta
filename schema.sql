@@ -267,7 +267,8 @@ RETURNS void AS $$
   ON CONFLICT (guild_id, rsn) DO UPDATE SET
     message_count   = ingame_activity.message_count + 1,
     month_count     = ingame_activity.month_count + 1,
-    last_message_at = now();
+    last_message_at = now()
+  WHERE ingame_activity.last_message_at < now() - interval '2 seconds';
 $$ LANGUAGE sql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION log_vc_time(p_guild text, p_user text, p_name text, p_role text, p_minutes int)
