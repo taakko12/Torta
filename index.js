@@ -545,18 +545,26 @@ function parseIngameRsn(embedAuthorName) {
   return embedAuthorName.replace(/^\[Leagues\] /, '').replace(/ \([^)]+\)$/, '').trim() || null;
 }
 
+const _ingameRecentlyCounted = new Map(); // `${guildId}:${rsn}` -> timestamp
+
 async function trackIngameChatMessage(guildId, message) {
   if (!message.embeds?.length) return;
   const { data } = await supabase.from('guild_config').select('clanchat_channel_id').eq('guild_id', guildId).maybeSingle();
   if (!data?.clanchat_channel_id || message.channelId !== data.clanchat_channel_id) return;
+  const now = Date.now();
   const counted = new Set();
   for (const embed of message.embeds) {
     if (!embed.author?.name) continue;
     const rsn = parseIngameRsn(embed.author.name);
-    if (rsn && !counted.has(rsn.toLowerCase())) {
-      counted.add(rsn.toLowerCase());
-      logIngameMessage(guildId, rsn).catch(() => {});
-    }
+    if (!rsn) continue;
+    const key = `${guildId}:${rsn.toLowerCase()}`;
+    const last = _ingameRecentlyCounted.get(key) ?? 0;
+    console.log(`[ingame] msg=${message.id} type=${message.webhookId ? 'webhook' : 'bot'} rsn=${rsn} msSinceLast=${now - last}`);
+    if (counted.has(rsn.toLowerCase()) || now - last < 2000) continue;
+    counted.add(rsn.toLowerCase());
+    _ingameRecentlyCounted.set(key, now);
+    if (_ingameRecentlyCounted.size > 500) _ingameRecentlyCounted.clear();
+    logIngameMessage(guildId, rsn).catch(() => {});
   }
 }
 
