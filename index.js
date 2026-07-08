@@ -1090,16 +1090,27 @@ async function retroScanIngameActivity() {
 
   for (const cfg of configs ?? []) {
     try {
+      const d = await loadData(cfg.guild_id).catch(() => ({}));
+      if (d.ingameRetroScanned) continue;
+
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
       const messages = await fetchMessagesAfter(cfg.clanchat_channel_id, dateToSnowflake(ninetyDaysAgo));
       let counted = 0;
       for (const msg of messages) {
+        const counted_rsns = new Set();
         for (const embed of msg.embeds ?? []) {
           if (!embed.author?.name) continue;
           const rsn = parseIngameRsn(embed.author.name);
-          if (rsn) { await logIngameMessage(cfg.guild_id, rsn); counted++; }
+          if (rsn && !counted_rsns.has(rsn.toLowerCase())) {
+            counted_rsns.add(rsn.toLowerCase());
+            await logIngameMessage(cfg.guild_id, rsn);
+            counted++;
+          }
         }
       }
+
+      d.ingameRetroScanned = true;
+      await saveData(cfg.guild_id, d).catch(() => {});
       console.log(`[activity] Retro ingame scan guild ${cfg.guild_id}: ${counted} messages`);
     } catch (err) {
       console.error(`[activity] Retro scan failed for guild ${cfg.guild_id}: ${err.message}`);
