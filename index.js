@@ -540,6 +540,22 @@ client.on('interactionCreate', async interaction => {
 
 });
 
+function parseIngameRsn(embedAuthorName) {
+  // TrackScape format: "RSN (Rank)" or "[Leagues] RSN (Rank)"
+  return embedAuthorName.replace(/^\[Leagues\] /, '').replace(/ \([^)]+\)$/, '').trim() || null;
+}
+
+async function trackIngameChatMessage(guildId, message) {
+  if (!message.embeds?.length) return;
+  const { data } = await supabase.from('guild_config').select('clanchat_channel_id').eq('guild_id', guildId).maybeSingle();
+  if (!data?.clanchat_channel_id || message.channelId !== data.clanchat_channel_id) return;
+  for (const embed of message.embeds) {
+    if (!embed.author?.name) continue;
+    const rsn = parseIngameRsn(embed.author.name);
+    if (rsn) logIngameMessage(guildId, rsn).catch(() => {});
+  }
+}
+
 // Watch configured channels for Dink death and loot webhook messages
 client.on('messageCreate', async message => {
   if (!message.guildId) return;
@@ -581,6 +597,8 @@ client.on('messageCreate', async message => {
         }
       }
     }
+    // TrackScape may also post clan chat messages as a bot (not a webhook)
+    trackIngameChatMessage(guildId, message);
     return;
   }
 
@@ -619,6 +637,9 @@ client.on('messageCreate', async message => {
       }
     }
   }
+
+  // TrackScape may also post clan chat messages as a webhook
+  trackIngameChatMessage(guildId, message);
 });
 
 function parseDeathImage(message) {
@@ -999,7 +1020,7 @@ async function retroFillMonthCounts() {
     for (const msg of messages) {
       for (const embed of msg.embeds ?? []) {
         if (!embed.author?.name) continue;
-        const rsn = embed.author.name.replace(/^\[Leagues\] /, '').replace(/ \([^)]+\)$/, '').trim().toLowerCase();
+        const rsn = parseIngameRsn(embed.author.name)?.toLowerCase();
         if (rsn) ingameCounts.set(rsn, (ingameCounts.get(rsn) ?? 0) + 1);
       }
     }
@@ -1059,8 +1080,7 @@ async function retroScanIngameActivity() {
       for (const msg of messages) {
         for (const embed of msg.embeds ?? []) {
           if (!embed.author?.name) continue;
-          // Format: "[Leagues] RSN (Rank)" — extract RSN
-          const rsn = embed.author.name.replace(/^\[Leagues\] /, '').replace(/ \([^)]+\)$/, '').trim();
+          const rsn = parseIngameRsn(embed.author.name);
           if (rsn) { await logIngameMessage(cfg.guild_id, rsn); counted++; }
         }
       }
