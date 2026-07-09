@@ -334,6 +334,16 @@ client.on('interactionCreate', async interaction => {
         if (!welcome.roleId) {
           return interaction.reply({ content: '❌ No member role set. Run `/welcome setrole` first.', flags: 64 });
         }
+
+        // Check blacklist before approving
+        const blacklistQuery = supabase.from('blacklist').select('reason, rsn, discord_id').eq('guild_id', guildId);
+        if (entry.rsn) blacklistQuery.or(`discord_id.eq.${entry.userId},rsn.ilike.${entry.rsn}`);
+        else blacklistQuery.eq('discord_id', entry.userId);
+        const { data: blacklistHits } = await blacklistQuery.limit(1);
+        const blacklistWarn = blacklistHits?.length
+          ? `\n⚠️ **BLACKLIST MATCH**: Previously removed — "${blacklistHits[0].reason}" (RSN: ${blacklistHits[0].rsn ?? '?'} / ID: ${blacklistHits[0].discord_id ?? '?'})`
+          : '';
+
         try {
           const member = await interaction.guild.members.fetch(entry.userId);
           await member.roles.add(welcome.roleId);
@@ -354,7 +364,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.client.users.fetch(entry.userId)
           .then(u => u.send(`✅ You've been approved and now have full access to the clan. Welcome, **${entry.rsn ?? 'member'}**!`).catch(() => {}))
           .catch(() => {});
-        return interaction.reply({ content: `✅ Approved <@${entry.userId}>${entry.rsn ? ` (${entry.rsn})` : ''}.`, flags: 64 });
+        return interaction.reply({ content: `✅ Approved <@${entry.userId}>${entry.rsn ? ` (${entry.rsn})` : ''}.${blacklistWarn}`, flags: 64 });
       } else {
         logBotEvent(guildId, 'welcome', 'reject', `${entry.rsn ?? '?'} (<@${entry.userId}>)`, interaction.user.id, interaction.user.username);
         await interaction.client.users.fetch(entry.userId)
