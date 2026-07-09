@@ -806,7 +806,46 @@ function startReminderLoop() {
     checkRaidReminders().catch(err =>
       console.error(`[reminders] Unexpected error in reminder loop: ${err.message}`)
     );
+    checkEventRsvpReminders().catch(err =>
+      console.error(`[reminders] RSVP check failed: ${err.message}`)
+    );
   }, 5 * 60 * 1000);
+}
+
+async function checkEventRsvpReminders() {
+  const now = new Date();
+  const in45min = new Date(now.getTime() + 45 * 60 * 1000).toISOString();
+  const in75min = new Date(now.getTime() + 75 * 60 * 1000).toISOString();
+
+  const { data: events } = await supabase
+    .from('clan_events')
+    .select('id, title, scheduled_at')
+    .eq('rsvp_reminded', false)
+    .gte('scheduled_at', in45min)
+    .lte('scheduled_at', in75min);
+
+  if (!events?.length) return;
+
+  for (const event of events) {
+    const { data: rsvps } = await supabase
+      .from('event_rsvps')
+      .select('discord_id')
+      .eq('event_id', event.id)
+      .eq('response', 'going');
+
+    if (rsvps?.length) {
+      const ts = Math.floor(new Date(event.scheduled_at).getTime() / 1000);
+      for (const { discord_id } of rsvps) {
+        await client.users.fetch(discord_id)
+          .then(u => u.send(`⏰ Reminder: **${event.title}** starts <t:${ts}:R>! You RSVPed as going.`).catch(() => {}))
+          .catch(() => {});
+      }
+      console.log(`[reminders] Sent RSVP reminders for "${event.title}" to ${rsvps.length} members`);
+      logBotEvent(process.env.CLAN_GUILD_ID, 'system', 'rsvp-reminder', `${event.title} (${rsvps.length} notified)`, null, null, 'system');
+    }
+
+    await supabase.from('clan_events').update({ rsvp_reminded: true }).eq('id', event.id);
+  }
 }
 
 async function checkRaidReminders() {
@@ -997,11 +1036,13 @@ async function postModeratorRecap() {
     { data: allLinks },
     { data: allDiscord },
     { data: allIngame },
+    { data: activeAbsences },
   ] = await Promise.all([
-    supabase.from('discord_activity').select('display_name, role_name, last_message_at').eq('guild_id', guildId).eq('month_count', 0).order('last_message_at', { ascending: true, nullsFirst: true }).limit(20),
+    supabase.from('discord_activity').select('display_name, role_name, last_message_at, discord_id').eq('guild_id', guildId).eq('month_count', 0).order('last_message_at', { ascending: true, nullsFirst: true }).limit(20),
     supabase.from('rsn_links').select('discord_id, rsn').eq('guild_id', guildId),
     supabase.from('discord_activity').select('discord_id, display_name').eq('guild_id', guildId),
     supabase.from('ingame_activity').select('rsn').eq('guild_id', guildId),
+    supabase.from('absences').select('discord_id, display_name, reason, return_date, created_at').eq('guild_id', guildId).is('returned_at', null),
   ]);
 
   const linkedDiscordIds = new Set((allLinks ?? []).map(l => l.discord_id));
@@ -1011,9 +1052,11 @@ async function postModeratorRecap() {
 
   const embeds = [];
 
-  // Inactive members
-  if (inactive?.length) {
-    const lines = inactive.map(m => {
+  // Inactive members (exclude those with active absences)
+  const absentIds = new Set((activeAbsences ?? []).map(a => a.discord_id));
+  const inactiveFiltered = (inactive ?? []).filter(m => !absentIds.has(m.discord_id));
+  if (inactiveFiltered.length) {
+    const lines = inactiveFiltered.map(m => {
       const last = m.last_message_at ? new Date(m.last_message_at).toLocaleDateString('en-GB') : 'never';
       return `• **${m.display_name}** (${m.role_name ?? 'Unknown'}) — last seen ${last}`;
     }).join('\n');
@@ -1021,7 +1064,21 @@ async function postModeratorRecap() {
       .setTitle('⚠️ Inactive Members This Month')
       .setDescription(lines)
       .setColor(0xED4245)
-      .setFooter({ text: `${inactive.length} members with 0 Discord messages this month` }));
+      .setFooter({ text: `${inactiveFiltered.length} members with 0 Discord messages this month` }));
+  }
+
+  // Active absences
+  if (activeAbsences?.length) {
+    const lines = activeAbsences.map(a => {
+      const since = new Date(a.created_at).toLocaleDateString('en-GB');
+      const ret = a.return_date ? ` — back ${a.return_date}` : '';
+      return `• **${a.display_name}**${ret} — ${a.reason ?? 'no reason given'} (since ${since})`;
+    }).join('\n');
+    embeds.push(new EmbedBuilder()
+      .setTitle('🏖️ Members On Break')
+      .setDescription(lines)
+      .setColor(0x7c5ce8)
+      .setFooter({ text: `${activeAbsences.length} active absence${activeAbsences.length === 1 ? '' : 's'}` }));
   }
 
   // Unlinked members
