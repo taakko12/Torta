@@ -24,6 +24,13 @@ const { recordAchievement } = require('./utils/achievementStorage');
 const { loadData, saveData } = require('./utils/storage');
 const supabase = require('./utils/supabase');
 
+function logBotEvent(guildId, command, subcommand, details, discordId = null, displayName = null, source = 'button') {
+  supabase.from('command_logs').insert({
+    guild_id: guildId, discord_id: discordId, display_name: displayName,
+    command, subcommand, details: details ?? null, source,
+  }).then(() => {}, () => {});
+}
+
 const DEATH_QUIPS = [
   'skill issue 💀',
   'F in chat',
@@ -213,6 +220,7 @@ client.once('clientReady', () => {
       await saveData(guildId, d).catch(() => {});
     }
     console.log('[activity] Monthly counts reset');
+    if (guildId) logBotEvent(guildId, 'system', 'monthly-reset', null, null, null, 'system');
   }, 3_600_000);
 });
 
@@ -266,9 +274,11 @@ client.on('interactionCreate', async interaction => {
         if (hasRole) {
           await member.roles.remove(roleId);
           await interaction.reply({ content: `✅ Removed ${entry.emoji} **${entry.label}** from your roles.`, flags: 64 });
+          logBotEvent(interaction.guildId, 'rolepanel', 'remove', entry.label, interaction.user.id, interaction.user.username);
         } else {
           await member.roles.add(roleId);
           await interaction.reply({ content: `✅ Added ${entry.emoji} **${entry.label}** to your roles.`, flags: 64 });
+          logBotEvent(interaction.guildId, 'rolepanel', 'add', entry.label, interaction.user.id, interaction.user.username);
         }
       } catch (err) {
         console.error(`[rolepanel] Failed to toggle role ${roleId} for ${interaction.user.tag}: ${err.message}`);
@@ -329,6 +339,7 @@ client.on('interactionCreate', async interaction => {
           await member.roles.add(welcome.roleId);
           if (entry.rsn) await member.setNickname(entry.rsn).catch(() => {});
           console.log(`[welcome] Approved ${member.user.tag} (RSN: ${entry.rsn ?? 'none'}) by ${interaction.user.tag}`);
+          logBotEvent(guildId, 'welcome', 'approve', `${entry.rsn ?? '?'} (<@${entry.userId}>)`, interaction.user.id, interaction.user.username);
         if (entry.referrer) {
           supabase.from('recruitments').insert({
             guild_id: guildId,
@@ -345,6 +356,7 @@ client.on('interactionCreate', async interaction => {
           .catch(() => {});
         return interaction.reply({ content: `✅ Approved <@${entry.userId}>${entry.rsn ? ` (${entry.rsn})` : ''}.`, flags: 64 });
       } else {
+        logBotEvent(guildId, 'welcome', 'reject', `${entry.rsn ?? '?'} (<@${entry.userId}>)`, interaction.user.id, interaction.user.username);
         await interaction.client.users.fetch(entry.userId)
           .then(u => u.send('❌ Your clan application was not approved at this time. Contact a mod if you have questions.').catch(() => {}))
           .catch(() => {});
@@ -371,6 +383,7 @@ client.on('interactionCreate', async interaction => {
 
       await updateRaid(raidId, { attendees: raid.signups });
       const updatedRaid = { ...raid, attendees: raid.signups };
+      logBotEvent(guildId, 'raid', 'complete', `${raid.name} (${raid.signups.length} attendees)`, interaction.user.id, interaction.user.username);
       await interaction.update({
         embeds: [buildRaidEmbed(updatedRaid)],
         components: buildRaidButtons(raidId, true)
@@ -407,6 +420,7 @@ client.on('interactionCreate', async interaction => {
           await submitter.send(`✅ Your loot submission of **${entry.item ?? entry.gpValue + ' gp'}** has been approved and added to the leaderboard!`).catch(() => {});
         } catch {}
         console.log(`[loot] Approved ${entry.gpValue.toLocaleString()} gp for "${entry.rsn}" by ${interaction.user.tag}`);
+        logBotEvent(guildId, 'loot', 'approve', `${entry.item ?? entry.gpValue.toLocaleString() + ' gp'} for ${entry.rsn}`, interaction.user.id, interaction.user.username);
       } else {
         newEmbed.setTitle('💰 Loot Submission — Rejected');
         newEmbed.setColor(0xed4245);
@@ -418,6 +432,7 @@ client.on('interactionCreate', async interaction => {
           );
         } catch {}
         console.log(`[loot] Rejected submission for "${entry.rsn}" by ${interaction.user.tag}`);
+        logBotEvent(guildId, 'loot', 'reject', `${entry.item ?? entry.gpValue.toLocaleString() + ' gp'} for ${entry.rsn}`, interaction.user.id, interaction.user.username);
       }
       return;
     }
@@ -504,11 +519,13 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: "You're already signed up!", flags: 64 });
       }
       raid.signups.push({ id: userId, username });
+      logBotEvent(guildId, 'raid', 'signup', raid.name, userId, username);
     } else {
       if (!alreadyIn) {
         return interaction.reply({ content: "You're not signed up.", flags: 64 });
       }
       raid.signups = raid.signups.filter(u => u.id !== userId);
+      logBotEvent(guildId, 'raid', 'dropout', raid.name, userId, username);
     }
 
     await updateRaid(raidId, { signups: raid.signups });
@@ -532,6 +549,7 @@ client.on('interactionCreate', async interaction => {
 
     await supabase.from('rsn_links').delete().eq('discord_id', interaction.user.id).eq('guild_id', guildId);
     await supabase.from('rsn_links').insert({ discord_id: interaction.user.id, guild_id: guildId, rsn: rsn.toLowerCase() });
+    logBotEvent(guildId, 'welcome', 'applied', `RSN: ${rsn}${referrer ? ` (referred by ${referrer})` : ''}`, interaction.user.id, interaction.user.username, 'modal');
 
     if (!welcome.modChannelId) {
       if (welcome.roleId) await interaction.member.roles.add(welcome.roleId).catch(() => {});
@@ -621,6 +639,7 @@ client.on('messageCreate', async message => {
         }
         await supabase.from('rsn_links').delete().eq('discord_id', message.author.id).eq('guild_id', guildId);
         await supabase.from('rsn_links').insert({ discord_id: message.author.id, guild_id: guildId, rsn: rsn.toLowerCase() });
+        logBotEvent(guildId, 'set-rsn', null, rsn, message.author.id, message.member?.displayName ?? message.author.username, 'message');
         message.author.send(`✅ Your nickname and RSN have been updated to **${rsn}**.`).catch(() => {});
       }
       return;
@@ -803,10 +822,12 @@ async function checkRaidReminders() {
       console.log(`[reminders] Sending 24h reminder for raid "${raid.name}" in guild ${raid.guildId}`);
       await sendReminder(raid, '24 hours');
       await updateRaid(raid.id, { reminded24h: true });
+      logBotEvent(raid.guildId, 'system', 'reminder', `24h: ${raid.name}`, null, null, 'system');
     } else if (in1h && !raid.reminded1h) {
       console.log(`[reminders] Sending 1h reminder for raid "${raid.name}" in guild ${raid.guildId}`);
       await sendReminder(raid, '1 hour');
       await updateRaid(raid.id, { reminded1h: true });
+      logBotEvent(raid.guildId, 'system', 'reminder', `1h: ${raid.name}`, null, null, 'system');
     }
   }
 }
@@ -960,6 +981,7 @@ async function postWeeklyRecap() {
   embeds[embeds.length - 1].setTimestamp();
   await channel.send({ embeds });
   console.log('[recap] Weekly recap posted');
+  logBotEvent(process.env.CLAN_GUILD_ID, 'system', 'weekly-recap', null, null, null, 'system');
 }
 
 async function postModeratorRecap() {
@@ -1017,6 +1039,7 @@ async function postModeratorRecap() {
   embeds[embeds.length - 1].setTimestamp();
   await channel.send({ content: '📋 **Weekly Moderator Recap**', embeds });
   console.log(`[modrecap] Posted: ${inactive?.length ?? 0} inactive, ${unlinkedDiscord.length} unlinked Discord, ${unlinkedIngame.length} unlinked RSN`);
+  logBotEvent(process.env.CLAN_GUILD_ID, 'system', 'mod-recap', `${inactive?.length ?? 0} inactive, ${unlinkedDiscord.length} unlinked Discord, ${unlinkedIngame.length} unlinked RSN`, null, null, 'system');
 }
 
 async function retroFillDiscordRoles() {
