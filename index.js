@@ -294,6 +294,15 @@ client.on('interactionCreate', async interaction => {
             .setMinLength(1)
             .setMaxLength(12)
             .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('referrer')
+            .setLabel('Who recruited you? (RSN, optional)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g. Zezima')
+            .setMaxLength(12)
+            .setRequired(false)
         )
       );
       return interaction.showModal(modal);
@@ -320,6 +329,14 @@ client.on('interactionCreate', async interaction => {
           await member.roles.add(welcome.roleId);
           if (entry.rsn) await member.setNickname(entry.rsn).catch(() => {});
           console.log(`[welcome] Approved ${member.user.tag} (RSN: ${entry.rsn ?? 'none'}) by ${interaction.user.tag}`);
+        if (entry.referrer) {
+          supabase.from('recruitments').insert({
+            guild_id: guildId,
+            recruiter_rsn: entry.referrer.toLowerCase(),
+            recruit_discord_id: entry.userId,
+            recruit_rsn: entry.rsn?.toLowerCase() ?? '',
+          }).then(() => {}, () => {});
+        }
         } catch (err) {
           console.error(`[welcome] Failed to grant role to ${entry.userId}: ${err.message}`);
         }
@@ -507,6 +524,7 @@ client.on('interactionCreate', async interaction => {
   // RSN modal submit (from "I Agree" button)
   if (interaction.isModalSubmit() && interaction.customId === 'welcome_rsn_modal') {
     const rsn = interaction.fields.getTextInputValue('rsn').trim();
+    const referrer = interaction.fields.getTextInputValue('referrer').trim() || null;
     const guildId = interaction.guildId;
     const welcome = await loadWelcome(guildId);
 
@@ -531,6 +549,7 @@ client.on('interactionCreate', async interaction => {
       .addFields(
         { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
         { name: 'RSN', value: rsn, inline: true },
+        ...(referrer ? [{ name: 'Recruited by', value: referrer, inline: true }] : []),
         { name: 'Applied', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
       )
       .setThumbnail(interaction.user.displayAvatarURL());
@@ -549,7 +568,7 @@ client.on('interactionCreate', async interaction => {
       )
     ]});
 
-    addWelcomePending(guildId, welcome, approvalMsg.id, { userId: interaction.user.id, rsn });
+    addWelcomePending(guildId, welcome, approvalMsg.id, { userId: interaction.user.id, rsn, referrer });
 
     return interaction.reply({ content: `✅ RSN set to **${rsn}**! A mod will review your application shortly.`, flags: 64 });
   }
