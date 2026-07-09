@@ -633,6 +633,29 @@ async function trackIngameChatMessage(guildId, message) {
 
 // Watch configured channels for Dink death and loot webhook messages
 client.on('messageCreate', async message => {
+  // Forward DM replies to the mod recap channel
+  if (!message.guildId && !message.author?.bot) {
+    const guildId = process.env.CLAN_GUILD_ID;
+    const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
+    const channelId = cfg?.inactivity_channel_id;
+    if (channelId) {
+      const channel = await client.channels.fetch(channelId).catch(() => null);
+      if (channel?.isTextBased()) {
+        const tag = message.author.tag ?? message.author.username;
+        channel.send({
+          embeds: [{
+            description: message.content || '*(no text)*',
+            color: 0x7c5ce8,
+            author: { name: `📬 DM from ${tag}`, icon_url: message.author.displayAvatarURL() },
+            footer: { text: `User ID: ${message.author.id}` },
+            timestamp: new Date().toISOString(),
+          }]
+        }).catch(() => {});
+      }
+    }
+    return;
+  }
+
   if (!message.guildId) return;
 
   const guildId = message.guildId;
