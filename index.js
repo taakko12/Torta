@@ -668,7 +668,7 @@ client.on('messageCreate', async message => {
 
       // Auto-acknowledge on first message
       if (isNew) {
-        message.author.send('✅ Your message has been received! A mod will get back to you shortly.').catch(() => {});
+        message.author.send(`✅ Your message has been received! A mod will get back to you shortly. (Ticket #${ticket.id})`).catch(() => {});
       }
 
       // Notify mod channel
