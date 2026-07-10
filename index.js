@@ -61,7 +61,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.DirectMessages,
   ]
 });
 client.commands = new Collection();
@@ -633,24 +634,58 @@ async function trackIngameChatMessage(guildId, message) {
 
 // Watch configured channels for Dink death and loot webhook messages
 client.on('messageCreate', async message => {
-  // Forward DM replies to the mod recap channel
+  // Mod-mail: DMs to the bot create/continue tickets
   if (!message.guildId && !message.author?.bot) {
     const guildId = process.env.CLAN_GUILD_ID;
-    const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
-    const channelId = cfg?.inactivity_channel_id;
-    if (channelId) {
-      const channel = await client.channels.fetch(channelId).catch(() => null);
-      if (channel?.isTextBased()) {
-        const tag = message.author.tag ?? message.author.username;
-        channel.send({
-          embeds: [{
-            description: message.content || '*(no text)*',
-            color: 0x7c5ce8,
-            author: { name: `📬 DM from ${tag}`, icon_url: message.author.displayAvatarURL() },
-            footer: { text: `User ID: ${message.author.id}` },
-            timestamp: new Date().toISOString(),
-          }]
-        }).catch(() => {});
+    const userId = message.author.id;
+    const content = message.content || '*(attachment)*';
+
+    // Find or create open ticket
+    let { data: ticket } = await supabase.from('tickets')
+      .select('id').eq('guild_id', guildId).eq('discord_id', userId).eq('status', 'open')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+    const isNew = !ticket;
+    if (!ticket) {
+      const { data: created } = await supabase.from('tickets').insert({
+        guild_id: guildId,
+        discord_id: userId,
+        display_name: message.author.displayName ?? message.author.username,
+        subject: content.slice(0, 60),
+      }).select('id').single();
+      ticket = created;
+    }
+
+    if (ticket) {
+      await supabase.from('ticket_messages').insert({
+        ticket_id: ticket.id,
+        author_discord_id: userId,
+        author_name: message.author.displayName ?? message.author.username,
+        content,
+        direction: 'inbound',
+      });
+
+      // Auto-acknowledge on first message
+      if (isNew) {
+        message.author.send('✅ Your message has been received! A mod will get back to you shortly.').catch(() => {});
+      }
+
+      // Notify mod channel
+      const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
+      if (cfg?.inactivity_channel_id) {
+        const channel = await client.channels.fetch(cfg.inactivity_channel_id).catch(() => null);
+        if (channel?.isTextBased()) {
+          const tag = message.author.tag ?? message.author.username;
+          channel.send({
+            embeds: [{
+              description: content,
+              color: isNew ? 0x7c5ce8 : 0x5865F2,
+              author: { name: `${isNew ? '🎫 New ticket' : '💬 Reply'} from ${tag}`, icon_url: message.author.displayAvatarURL() },
+              footer: { text: `Ticket #${ticket.id} · User ID: ${userId}` },
+              timestamp: new Date().toISOString(),
+            }]
+          }).catch(() => {});
+        }
       }
     }
     return;
