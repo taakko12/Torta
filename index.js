@@ -838,6 +838,18 @@ function parseDeathMessage(message) {
 }
 
 
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  if (newMember.guild.id !== process.env.CLAN_GUILD_ID) return;
+  const topRole = r => r.roles.cache.filter(x => x.name !== '@everyone').sort((a, b) => b.position - a.position).first();
+  const oldTop = topRole(oldMember);
+  const newTop = topRole(newMember);
+  if (oldTop?.id === newTop?.id) return;
+  await supabase.from('discord_activity')
+    .update({ role_name: newTop?.name ?? null })
+    .eq('guild_id', newMember.guild.id)
+    .eq('discord_id', newMember.id);
+});
+
 client.on('voiceStateUpdate', async (oldState, newState) => {
   const guildId = (newState.guild ?? oldState.guild)?.id;
   if (guildId !== process.env.CLAN_GUILD_ID) return;
