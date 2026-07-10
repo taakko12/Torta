@@ -1195,7 +1195,7 @@ async function retroFillDiscordRoles() {
   if (!guild) return;
 
   const data = await loadData(guildId);
-  if (data.discordRolesFilled) return;
+  if (data.discordRoleNamesFilled) return;
 
   const { data: rows } = await supabase.from('discord_activity').select('discord_id').eq('guild_id', guildId);
   if (!rows?.length) return;
@@ -1214,7 +1214,7 @@ async function retroFillDiscordRoles() {
     } catch {}
   }
 
-  data.discordRolesFilled = true;
+  data.discordRoleNamesFilled = true;
   await saveData(guildId, data);
   console.log(`[activity] Backfilled roles for ${updated} Discord members`);
 }
