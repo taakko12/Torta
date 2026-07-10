@@ -1,7 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
 const { getRaid, updateRaid, getUpcomingRaids } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
@@ -82,6 +82,10 @@ for (const file of commandFiles) {
 
 client.once('clientReady', () => {
   console.log(`[bot] Logged in as ${client.user.tag} (${client.commands.size} commands loaded)`);
+  client.user.setPresence({
+    activities: [{ name: 'tortapounders.vercel.app', type: ActivityType.Watching }],
+    status: 'online',
+  });
   startTrackscapeServer(client, parseInt(process.env.PORT) || parseInt(process.env.TRACKSCAPE_PORT) || 3000);
   startReminderLoop();
   checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
