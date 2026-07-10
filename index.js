@@ -840,12 +840,15 @@ function parseDeathMessage(message) {
 
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
   if (newMember.guild.id !== process.env.CLAN_GUILD_ID) return;
-  const topRole = r => r.roles.cache.filter(x => x.name !== '@everyone').sort((a, b) => b.position - a.position).first();
-  const oldTop = topRole(oldMember);
-  const newTop = topRole(newMember);
-  if (oldTop?.id === newTop?.id) return;
+  const oldIds = new Set(oldMember.roles.cache.keys());
+  const newIds = new Set(newMember.roles.cache.keys());
+  const rolesChanged = [...oldIds].some(id => !newIds.has(id)) || [...newIds].some(id => !oldIds.has(id));
+  if (!rolesChanged) return;
+  const nonEveryone = r => r.roles.cache.filter(x => x.name !== '@everyone');
+  const allRoleNames = [...nonEveryone(newMember).values()].map(r => r.name);
+  const topRole = nonEveryone(newMember).sort((a, b) => b.position - a.position).first()?.name ?? null;
   await supabase.from('discord_activity')
-    .update({ role_name: newTop?.name ?? null })
+    .update({ role_name: topRole, role_names: allRoleNames })
     .eq('guild_id', newMember.guild.id)
     .eq('discord_id', newMember.id);
 });
@@ -1201,9 +1204,11 @@ async function retroFillDiscordRoles() {
   for (const { discord_id } of rows) {
     try {
       const member = await guild.members.fetch(discord_id);
-      const topRole = member.roles.cache.filter(r => r.name !== '@everyone').sort((a, b) => b.position - a.position).first()?.name ?? null;
+      const filtered = member.roles.cache.filter(r => r.name !== '@everyone');
+      const topRole = filtered.sort((a, b) => b.position - a.position).first()?.name ?? null;
+      const allRoleNames = [...filtered.values()].map(r => r.name);
       if (topRole) {
-        await supabase.from('discord_activity').update({ role_name: topRole }).eq('guild_id', guildId).eq('discord_id', discord_id);
+        await supabase.from('discord_activity').update({ role_name: topRole, role_names: allRoleNames }).eq('guild_id', guildId).eq('discord_id', discord_id);
         updated++;
       }
     } catch {}
