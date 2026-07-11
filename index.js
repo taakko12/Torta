@@ -483,6 +483,8 @@ client.on('interactionCreate', async interaction => {
         if (isNaN(idx) || idx >= poll.candidates.length) return;
         const userVotes = { ...poll.user_votes, [interaction.user.id]: idx };
         await updatePoll(poll.id, { user_votes: userVotes });
+        const voted = poll.candidates[idx];
+        logBotEvent(interaction.guildId, poll.poll_type, 'vote', voted, interaction.user.id, interaction.member?.displayName ?? interaction.user.username);
         return interaction.update({
           embeds: [buildPollEmbed({ ...poll, user_votes: userVotes })],
           components: buildPollComponents({ ...poll, user_votes: userVotes }),
@@ -493,6 +495,7 @@ client.on('interactionCreate', async interaction => {
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
           return interaction.reply({ content: '❌ Only moderators can accept.', flags: 64 });
         }
+        logBotEvent(interaction.guildId, poll.poll_type, 'accept', poll.candidates.join(', '), interaction.user.id, interaction.member?.displayName ?? interaction.user.username);
         await interaction.deferUpdate();
         return lockInPoll(poll, client, false);
       }
