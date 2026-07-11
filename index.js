@@ -90,6 +90,22 @@ client.once('clientReady', () => {
   startReminderLoop();
   checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
   setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);
+
+  async function sendScheduledAnnouncements() {
+    const now = new Date().toISOString();
+    const { data: pending } = await supabase.from('scheduled_announcements')
+      .select('id, channel_id, message').is('sent_at', null).lte('scheduled_at', now);
+    for (const item of pending ?? []) {
+      try {
+        const ch = await client.channels.fetch(item.channel_id).catch(() => null);
+        if (ch?.isTextBased()) await ch.send(item.message);
+        await supabase.from('scheduled_announcements').update({ sent_at: new Date().toISOString() }).eq('id', item.id);
+        console.log(`[announcements] Sent scheduled announcement ${item.id}`);
+      } catch (e) { console.error(`[announcements] Failed to send ${item.id}:`, e.message); }
+    }
+  }
+  sendScheduledAnnouncements().catch(console.error);
+  setInterval(() => sendScheduledAnnouncements().catch(console.error), 60_000);
   setInterval(async () => {
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
