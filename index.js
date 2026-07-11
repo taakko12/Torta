@@ -59,6 +59,7 @@ const DEATH_QUIPS = [
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
@@ -872,6 +873,14 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     .update({ role_name: topRole, role_names: allRoleNames })
     .eq('guild_id', newMember.guild.id)
     .eq('discord_id', newMember.id);
+});
+
+client.on('guildMemberRemove', async member => {
+  if (member.guild.id !== process.env.CLAN_GUILD_ID) return;
+  await supabase.from('discord_activity')
+    .update({ role_name: null, role_names: [] })
+    .eq('guild_id', member.guild.id)
+    .eq('discord_id', member.id);
 });
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
