@@ -517,7 +517,7 @@ client.on('interactionCreate', async interaction => {
       const displayName = interaction.member?.displayName ?? interaction.user.username;
       try {
         if (response === 'going') {
-          await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName, response: 'going' }, { onConflict: 'event_id,discord_id' });
+          await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName, response: 'going', rsvped_at: new Date().toISOString() }, { onConflict: 'event_id,discord_id' });
           return interaction.reply({ content: "✅ You're going! See you there.", flags: 64 });
         } else {
           await supabase.from('event_rsvps').delete().eq('event_id', eventId).eq('discord_id', userId);
