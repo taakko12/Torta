@@ -19,6 +19,11 @@ module.exports = {
             .setDescription('Channel to post achievement broadcasts (drops, pets, quests, etc.)')
             .setRequired(false)
         )
+        .addChannelOption(opt =>
+          opt.setName('coffer')
+            .setDescription('Channel for coffer deposits/withdrawals (defaults to broadcasts channel if not set)')
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub.setName('code')
@@ -37,9 +42,11 @@ module.exports = {
     if (sub === 'setup') {
       const clanChatChannel = interaction.options.getChannel('clanchat');
       const broadcastChannel = interaction.options.getChannel('broadcasts');
+      const cofferChannel = interaction.options.getChannel('coffer');
 
       if (clanChatChannel) config.clanChatChannelId = clanChatChannel.id;
       if (broadcastChannel) config.broadcastChannelId = broadcastChannel.id;
+      if (cofferChannel) config.cofferChannelId = cofferChannel.id;
       if (!config.verificationCode) config.verificationCode = generateCode();
 
       await saveTrackscape(guildId, config);
@@ -60,6 +67,7 @@ module.exports = {
         .addFields(
           { name: 'Clan Chat Channel', value: config.clanChatChannelId ? `<#${config.clanChatChannelId}>` : 'Not set', inline: true },
           { name: 'Broadcasts Channel', value: config.broadcastChannelId ? `<#${config.broadcastChannelId}>` : 'Not set', inline: true },
+          { name: 'Coffer Channel', value: config.cofferChannelId ? `<#${config.cofferChannelId}>` : 'Not set (uses broadcasts channel)', inline: true },
           { name: '​', value: '​', inline: false },
           { name: 'Verification Code', value: `\`${config.verificationCode}\``, inline: false },
           { name: 'HTTP Endpoint (for RuneLite plugin)', value: `\`${httpUrl}\``, inline: false },

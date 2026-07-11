@@ -4,13 +4,14 @@ const crypto = require('crypto');
 async function loadTrackscape(guildId) {
   const { data } = await supabase
     .from('guild_config')
-    .select('trackscape_code, clanchat_channel_id, broadcast_channel_id')
+    .select('trackscape_code, clanchat_channel_id, broadcast_channel_id, coffer_channel_id')
     .eq('guild_id', guildId)
     .maybeSingle();
   return {
     verificationCode: data?.trackscape_code ?? null,
     clanChatChannelId: data?.clanchat_channel_id ?? null,
     broadcastChannelId: data?.broadcast_channel_id ?? null,
+    cofferChannelId: data?.coffer_channel_id ?? null,
   };
 }
 
@@ -22,6 +23,7 @@ async function saveTrackscape(guildId, config) {
       trackscape_code: config.verificationCode,
       clanchat_channel_id: config.clanChatChannelId,
       broadcast_channel_id: config.broadcastChannelId,
+      coffer_channel_id: config.cofferChannelId ?? null,
     }, { onConflict: 'guild_id' });
   if (error) throw error;
 }
@@ -33,7 +35,7 @@ function generateCode() {
 async function findGuildByCode(code) {
   const { data } = await supabase
     .from('guild_config')
-    .select('guild_id, trackscape_code, clanchat_channel_id, broadcast_channel_id')
+    .select('guild_id, trackscape_code, clanchat_channel_id, broadcast_channel_id, coffer_channel_id')
     .eq('trackscape_code', code)
     .maybeSingle();
   if (!data) return null;
@@ -42,6 +44,7 @@ async function findGuildByCode(code) {
     verificationCode: data.trackscape_code,
     clanChatChannelId: data.clanchat_channel_id,
     broadcastChannelId: data.broadcast_channel_id,
+    cofferChannelId: data.coffer_channel_id ?? null,
   };
 }
 

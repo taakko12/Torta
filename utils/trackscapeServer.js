@@ -6,6 +6,7 @@ const { findGuildByCode } = require('./trackscapeStorage');
 const { extractBroadcast, stripTags } = require('./broadcastExtractor');
 const { recordDrop } = require('./dropStorage');
 const { recordDeath } = require('./plankStorage');
+const { recordDeposit, updateLeaderboardEmbed } = require('./cofferStorage');
 const { logIngameMessage } = require('./activityStorage');
 
 // verificationCode → Set<WebSocket>
@@ -122,14 +123,18 @@ function startTrackscapeServer(discordClient, port = 3000) {
       const isLeague = msg.icon_id === 22;
 
       if (isBroadcast) {
-        if (!guild.broadcastChannelId) continue;
         const broadcast = extractBroadcast(cleanMsg);
         if (!broadcast) continue;
         const embed = buildBroadcastEmbed(broadcast);
         if (!embed) continue;
         if (isLeague) embed.setFooter({ text: 'Leagues' });
+        // Route coffer to its own channel if configured, else fall back to broadcast channel
+        const targetChannelId = broadcast.type === 'Coffer' && guild.cofferChannelId
+          ? guild.cofferChannelId
+          : guild.broadcastChannelId;
+        if (!targetChannelId) continue;
         try {
-          const channel = await discordClient.channels.fetch(guild.broadcastChannelId);
+          const channel = await discordClient.channels.fetch(targetChannelId);
           if (channel) {
             const sentMsg = await channel.send({ embeds: [embed] });
             if ((broadcast.type === 'RaidDrop' || broadcast.type === 'ItemDrop') && broadcast.value > 0) {
@@ -137,6 +142,10 @@ function startTrackscapeServer(discordClient, port = 3000) {
             }
             if (broadcast.type === 'PK' && !broadcast.won) {
               await recordDeath(guild.guildId, broadcast.player, sentMsg.id, null);
+            }
+            if (broadcast.type === 'Coffer' && broadcast.gp > 0) {
+              await recordDeposit(guild.guildId, broadcast.player, broadcast.gp, broadcast.action);
+              updateLeaderboardEmbed(discordClient, guild.guildId).catch(() => {});
             }
           }
         } catch (err) {
