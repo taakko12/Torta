@@ -1,6 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { loadData, saveData } = require('./storage');
 const supabase = require('./supabase');
+const { insertPick } = require('./pollStorage');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -332,7 +333,9 @@ async function lockInPoll(poll, client, autoClose = false) {
     console.error(`[${tag}] Failed to update Discord message: ${e.message}`);
   }
 
-  // Persist winner to guild history
+  // Persist winner to comp_picks (reliable) + guild_data (legacy backup)
+  await insertPick(guild_id, poll_type, winner);
+  for (const p of partners) await insertPick(guild_id, poll_type, p);
   const data = await loadData(guild_id);
   const histKey = poll_type === 'botw' ? 'botwHistory' : 'sotwHistory';
   data[histKey] = [...(pre_roll_history ?? []), winner].slice(-HISTORY_SIZE * 2);

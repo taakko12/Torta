@@ -7,7 +7,7 @@ const {
   BOTW_DISPLAY, SOTW_DISPLAY, HISTORY_SIZE, getBossPartners,
   nextCompWindow, rollCandidates, buildPollEmbed, buildPollComponents,
 } = require('../utils/pollHelpers');
-const { createPoll } = require('../utils/pollStorage');
+const { createPoll, getRecentPicks, getRecentPicksWithDates, insertPick, deleteMostRecentPick } = require('../utils/pollStorage');
 const { getCurrentBossCompetitions, getCurrentSkillCompetition, getCompetitionStandings } = require('../utils/wom');
 const { buildCompetitionEmbed, humanize, formatNumber } = require('../utils/womEmbeds');
 
@@ -136,8 +136,7 @@ async function execBotwStats(interaction) {
 
 async function execBotwRoll(interaction) {
   const guildId = interaction.guildId;
-  const data = await loadData(guildId);
-  const history = data.botwHistory ?? [];
+  const history = await getRecentPicks(guildId, 'botw');
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);
   const endsUnix = Math.floor(endsAt.getTime() / 1000);
@@ -196,8 +195,7 @@ async function execSotwStats(interaction) {
 
 async function execSotwRoll(interaction) {
   const guildId = interaction.guildId;
-  const data = await loadData(guildId);
-  const history = data.sotwHistory ?? [];
+  const history = await getRecentPicks(guildId, 'sotw');
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);
   const endsUnix = Math.floor(endsAt.getTime() / 1000);
@@ -227,8 +225,7 @@ async function execSotwRoll(interaction) {
 // ── Standalone channel roll (used by auto-scheduler in index.js) ──────────────
 
 async function rollPollToChannel(type, guildId, channel, data) {
-  const histKey = type === 'botw' ? 'botwHistory' : 'sotwHistory';
-  const history = data[histKey] ?? [];
+  const history = await getRecentPicks(guildId, type);
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);
   const endsUnix = Math.floor(endsAt.getTime() / 1000);
@@ -302,10 +299,24 @@ function addGroupSubcommands(group) {
       .setDescription("Set a member's win count directly — admin only")
       .addUserOption(opt => opt.setName('user').setDescription('Member to set').setRequired(true))
       .addIntegerOption(opt => opt.setName('amount').setDescription('Exact win count').setMinValue(0).setRequired(true))
+    )
+    .addSubcommand(sub => sub
+      .setName('history')
+      .setDescription('Show recent picks for this competition type')
+    )
+    .addSubcommand(sub => sub
+      .setName('addpick')
+      .setDescription('Manually add a metric to pick history — admin only')
+      .addStringOption(opt => opt.setName('metric').setDescription('Metric key (e.g. fishing, zulrah)').setRequired(true))
+    )
+    .addSubcommand(sub => sub
+      .setName('deletepick')
+      .setDescription('Remove the most recent occurrence of a metric from pick history — admin only')
+      .addStringOption(opt => opt.setName('metric').setDescription('Metric key (e.g. fishing, zulrah)').setRequired(true))
     );
 }
 
-const ADMIN_SUBS = new Set(['leaderboard', 'roll', 'setpollchannel', 'add', 'remove', 'set']);
+const ADMIN_SUBS = new Set(['leaderboard', 'roll', 'setpollchannel', 'add', 'remove', 'set', 'addpick', 'deletepick']);
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -334,6 +345,42 @@ module.exports = {
     if (sub === 'add') return execAdd(interaction, cfg);
     if (sub === 'remove') return execRemove(interaction, cfg);
     if (sub === 'set') return execSet(interaction, cfg);
+
+    if (sub === 'history') {
+      const picks = await getRecentPicksWithDates(interaction.guildId, cfg.key, 10);
+      const displayMap = cfg.key === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+      const lines = picks.length
+        ? picks.map((p, i) => `${picks.length - i}. **${displayMap[p.metric] ?? p.metric}** — <t:${Math.floor(new Date(p.picked_at).getTime() / 1000)}:d>`).reverse().join('\n')
+        : 'No picks recorded yet.';
+      const excluded = picks.slice(0, HISTORY_SIZE).map(p => displayMap[p.metric] ?? p.metric);
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle(`${cfg.emoji} ${cfg.label} — Recent Picks`)
+          .setColor(cfg.color)
+          .setDescription(lines)
+          .addFields({ name: 'Currently excluded from next roll', value: excluded.length ? excluded.join(', ') : 'None' })],
+        flags: 64,
+      });
+    }
+
+    if (sub === 'addpick') {
+      const metric = interaction.options.getString('metric').toLowerCase().trim();
+      await insertPick(interaction.guildId, cfg.key, metric);
+      const displayMap = cfg.key === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+      return interaction.reply({ content: `✅ Added **${displayMap[metric] ?? metric}** to ${cfg.label} pick history.`, flags: 64 });
+    }
+
+    if (sub === 'deletepick') {
+      const metric = interaction.options.getString('metric').toLowerCase().trim();
+      const deleted = await deleteMostRecentPick(interaction.guildId, cfg.key, metric);
+      const displayMap = cfg.key === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+      return interaction.reply({
+        content: deleted
+          ? `✅ Removed most recent **${displayMap[metric] ?? metric}** from ${cfg.label} history.`
+          : `❌ No pick found for \`${metric}\` in ${cfg.label} history.`,
+        flags: 64,
+      });
+    }
 
     if (group === 'botw') {
       if (sub === 'stats') return execBotwStats(interaction);
