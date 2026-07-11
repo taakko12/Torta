@@ -19,8 +19,10 @@ function formatGp(value) {
   return `${value} gp`;
 }
 
+const SITE = process.env.WEBSITE_URL || 'https://tortapounders.vercel.app';
+
 function buildLeaderboardEmbed(entries, title, color) {
-  const embed = new EmbedBuilder().setTitle(title).setColor(color).setTimestamp();
+  const embed = new EmbedBuilder().setTitle(title).setURL(`${SITE}/feed?section=loot`).setColor(color).setTimestamp();
   if (entries.length === 0) {
     embed.setDescription('No loot recorded yet.');
   } else {

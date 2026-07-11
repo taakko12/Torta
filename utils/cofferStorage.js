@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const supabase = require('./supabase');
+const SITE = process.env.WEBSITE_URL || 'https://tortapounders.vercel.app';
 
 async function recordDeposit(guildId, player, gp, action) {
   const { error } = await supabase.from('coffer_deposits').insert({ guild_id: guildId, player, gp, action });
@@ -26,6 +27,7 @@ function buildCofferEmbed(leaderboard) {
     : top.map((e, i) => `${MEDALS[i] ?? `${i + 1}.`} **${e.player}** — ${e.net.toLocaleString()} gp`).join('\n');
   return new EmbedBuilder()
     .setTitle('🏦 Clan Coffer Leaderboard')
+    .setURL(`${SITE}/admin/coffer`)
     .setDescription(description)
     .setColor(0xF39C12)
     .setTimestamp()

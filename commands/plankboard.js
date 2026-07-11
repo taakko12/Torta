@@ -5,6 +5,7 @@ const {
   currentMonth,
 } = require('../utils/plankStorage');
 const { MEDALS } = require('../utils/constants');
+const SITE = process.env.WEBSITE_URL || 'https://tortapounders.vercel.app';
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -35,6 +36,7 @@ module.exports = {
 
       const embed = new EmbedBuilder()
         .setTitle(`💀 Plank Leaderboard — ${monthName}`)
+        .setURL(`${SITE}/feed?section=deaths`)
         .setColor(0x992d22)
         .setTimestamp();
 

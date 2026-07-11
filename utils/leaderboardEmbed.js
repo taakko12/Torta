@@ -3,17 +3,20 @@ const { MEDALS } = require('./constants');
 
 // board = { users: { [userId]: { wins } } }
 // options = { title, color, emptyText }
+const SITE = process.env.WEBSITE_URL || 'https://tortapounders.vercel.app';
+
 function buildLeaderboardEmbed(board, options = {}) {
   const title = options.title ?? '🏆 Leaderboard';
   const color = options.color ?? 0xf5a623;
   const emptyText = options.emptyText ?? 'No wins recorded yet. Use the add command to get started!';
+  const url = options.url ?? `${SITE}/#leaderboards`;
 
   const sorted = Object.entries(board.users)
     .filter(([, u]) => u.wins > 0)
     .sort((a, b) => b[1].wins - a[1].wins)
     .slice(0, 3);
 
-  const embed = new EmbedBuilder().setTitle(title).setColor(color).setTimestamp();
+  const embed = new EmbedBuilder().setTitle(title).setURL(url).setColor(color).setTimestamp();
 
   if (sorted.length === 0) {
     embed.setDescription(emptyText);
