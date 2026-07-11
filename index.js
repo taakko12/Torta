@@ -516,7 +516,7 @@ client.on('interactionCreate', async interaction => {
       const userId = interaction.user.id;
       const displayName = interaction.member?.displayName ?? interaction.user.username;
       if (response === 'going') {
-        const { error } = await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName, response: 'going', rsvped_at: new Date().toISOString() }, { onConflict: 'event_id,discord_id' });
+        const { error } = await supabase.from('event_rsvps').upsert({ event_id: eventId, discord_id: userId, display_name: displayName, rsvped_at: new Date().toISOString() }, { onConflict: 'event_id,discord_id' });
         if (error) {
           console.error(`[rsvp] upsert failed for event ${eventId}, user ${userId}:`, error.message);
           return interaction.reply({ content: '❌ Could not save your RSVP. Try again in a moment.', flags: 64 }).catch(() => {});
