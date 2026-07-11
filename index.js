@@ -521,15 +521,17 @@ client.on('interactionCreate', async interaction => {
           console.error(`[rsvp] upsert failed for event ${eventId}, user ${userId}:`, error.message);
           return interaction.reply({ content: '❌ Could not save your RSVP. Try again in a moment.', flags: 64 }).catch(() => {});
         }
-        return interaction.reply({ content: "✅ You're going! See you there.", flags: 64 });
+        await interaction.reply({ content: "✅ You're going! See you there.", flags: 64 });
       } else {
         const { error } = await supabase.from('event_rsvps').delete().eq('event_id', eventId).eq('discord_id', userId);
         if (error) {
           console.error(`[rsvp] delete failed for event ${eventId}, user ${userId}:`, error.message);
           return interaction.reply({ content: '❌ Could not remove your RSVP. Try again in a moment.', flags: 64 }).catch(() => {});
         }
-        return interaction.reply({ content: "Got it, you won't be attending.", flags: 64 });
+        await interaction.reply({ content: "Got it, you won't be attending.", flags: 64 });
       }
+      updateRsvpEmbed(eventId).catch(() => {});
+      return;
     }
 
     if (action !== 'raid_signup' && action !== 'raid_dropout') return;
@@ -898,6 +900,28 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 });
 
 client.on('error', err => console.error(`[discord] Client error: ${err.message}`));
+
+async function updateRsvpEmbed(eventId) {
+  const { data: event } = await supabase.from('clan_events').select('channel_id, message_id, title, description, event_type, scheduled_at').eq('id', eventId).maybeSingle();
+  if (!event?.message_id || !event?.channel_id) return;
+  const { data: rsvps } = await supabase.from('event_rsvps').select('display_name').eq('event_id', eventId).order('rsvped_at');
+  const names = (rsvps ?? []).map(r => r.display_name).filter(Boolean);
+  const ch = await client.channels.fetch(event.channel_id).catch(() => null);
+  if (!ch) return;
+  const msg = await ch.messages.fetch(event.message_id).catch(() => null);
+  if (!msg) return;
+  const dateStr = event.scheduled_at
+    ? new Date(event.scheduled_at).toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
+    : 'TBD';
+  const fields = [
+    { name: 'When', value: dateStr, inline: true },
+    { name: 'Type', value: event.event_type || 'Event', inline: true },
+  ];
+  if (names.length > 0) fields.push({ name: `✅ Going (${names.length})`, value: names.join(', ') });
+  await msg.edit({
+    embeds: [{ title: `📅 ${event.title}`, description: event.description || undefined, color: 0x7c5ce8, fields, footer: { text: 'Click below to RSVP' } }],
+  }).catch(() => {});
+}
 
 async function checkExpiredPolls() {
   const expired = await getExpiredPolls();
