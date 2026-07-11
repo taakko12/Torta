@@ -27,7 +27,7 @@ function buildCofferEmbed(leaderboard) {
     : top.map((e, i) => `${MEDALS[i] ?? `${i + 1}.`} **${e.player}** — ${e.net.toLocaleString()} gp`).join('\n');
   return new EmbedBuilder()
     .setTitle('🏦 Clan Coffer Leaderboard')
-    .setURL(`${SITE}/admin/coffer`)
+    .setURL(`${SITE}/feed?section=coffer`)
     .setDescription(description)
     .setColor(0xF39C12)
     .setTimestamp()
