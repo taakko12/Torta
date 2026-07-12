@@ -85,7 +85,8 @@ async function getGroupGained(metric, period = 'week', limit = 3) {
 
 async function getGroupMembers() {
   const groupId = requireGroupId();
-  return womGet(`/groups/${groupId}/members`);
+  const group = await womGet(`/groups/${groupId}`);
+  return group.memberships ?? [];
 }
 
 module.exports = {
