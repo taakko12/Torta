@@ -1512,6 +1512,9 @@ async function checkWomDepartures() {
       continue // not in server anymore, nothing to do
     }
 
+    const GUEST_ROLE_ID = process.env.GUEST_ROLE_ID || '1519867633069981818'
+    if (member.roles.cache.has(GUEST_ROLE_ID)) continue // guests are allowed to stay
+
     const roleList = member.roles.cache.filter(r => r.id !== guild.id).map(r => r.name).join(', ') || 'None'
     const embed = new EmbedBuilder()
       .setTitle('🚪 Member Left WOM Group')
