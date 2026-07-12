@@ -97,6 +97,10 @@ function buildBroadcastEmbed(broadcast) {
   }
 }
 
+const supabase = require('./supabase');
+
+const FEEDBACK_COLORS = { Events: 0x5865F2, Discord: 0x57F287, Bot: 0xFEE75C, Website: 0xEB459E };
+
 function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) {
   const app = express();
   app.use(express.json());
@@ -106,6 +110,33 @@ function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) 
     if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
     res.send('OK');
     if (onWomCheck) onWomCheck().catch(e => console.error(`[wom-check] ${e.message}`));
+  });
+
+  app.post('/api/feedback-notify', async (req, res) => {
+    const secret = process.env.BOT_ADMIN_SECRET;
+    if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
+    const { guildId, category, message } = req.body;
+    res.send('OK');
+    try {
+      const { data: config } = await supabase
+        .from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).single();
+      const channelId = config?.inactivity_channel_id;
+      if (!channelId) return;
+      const channel = await discordClient.channels.fetch(channelId);
+      if (!channel) return;
+      const embed = new EmbedBuilder()
+        .setTitle('📬 New Feedback')
+        .setColor(FEEDBACK_COLORS[category] ?? 0x7c5ce8)
+        .addFields(
+          { name: 'Category', value: category, inline: true },
+          { name: 'Message', value: message },
+        )
+        .setFooter({ text: 'View all → https://tortapounders.vercel.app/admin/feedback' })
+        .setTimestamp();
+      await channel.send({ embeds: [embed] });
+    } catch (err) {
+      console.error(`[feedback-notify] ${err.message}`);
+    }
   });
 
   app.post('/api/chat/new-clan-chat', async (req, res) => {
