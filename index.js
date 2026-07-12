@@ -424,8 +424,13 @@ client.on('interactionCreate', async interaction => {
             .addFields({ name: 'Kicked by', value: `<@${interaction.user.id}>`, inline: true });
           logBotEvent(guildId, 'moderation', 'wom-kick', `<@${discordId}>`, interaction.user.id, interaction.user.username);
         } catch (err) {
-          updatedEmbed.setTitle('🚪 Kick Failed').setColor(0xc89b3c)
-            .addFields({ name: 'Error', value: err.message, inline: false });
+          if (err.code === 10007 || err.message === 'Unknown Member') {
+            updatedEmbed.setTitle('🚪 Already Left').setColor(0x5a5a7a)
+              .addFields({ name: 'Note', value: 'Member already left the server on their own.', inline: false });
+          } else {
+            updatedEmbed.setTitle('🚪 Kick Failed').setColor(0xc89b3c)
+              .addFields({ name: 'Error', value: err.message, inline: false });
+          }
         }
       } else {
         updatedEmbed.setTitle('🚪 Dismissed — Still in Discord').setColor(0x5a5a7a)
