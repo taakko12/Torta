@@ -88,7 +88,7 @@ client.once('clientReady', () => {
     activities: [{ name: 'tortapounders.vercel.app', type: ActivityType.Watching }],
     status: 'online',
   });
-  startTrackscapeServer(client, parseInt(process.env.PORT) || parseInt(process.env.TRACKSCAPE_PORT) || 3000);
+  startTrackscapeServer(client, parseInt(process.env.PORT) || parseInt(process.env.TRACKSCAPE_PORT) || 3000, { onWomCheck: checkWomDepartures });
   startReminderLoop();
   checkExpiredPolls().catch(e => console.error(`[poll] Startup check failed: ${e.message}`));
   setInterval(() => checkExpiredPolls().catch(e => console.error(`[poll] Interval check failed: ${e.message}`)), 60_000);

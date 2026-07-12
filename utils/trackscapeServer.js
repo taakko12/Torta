@@ -97,9 +97,16 @@ function buildBroadcastEmbed(broadcast) {
   }
 }
 
-function startTrackscapeServer(discordClient, port = 3000) {
+function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) {
   const app = express();
   app.use(express.json());
+
+  app.post('/api/admin/wom-check', async (req, res) => {
+    const secret = process.env.BOT_ADMIN_SECRET;
+    if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
+    res.send('OK');
+    if (onWomCheck) onWomCheck().catch(e => console.error(`[wom-check] ${e.message}`));
+  });
 
   app.post('/api/chat/new-clan-chat', async (req, res) => {
     const code = req.headers['verification-code'];
