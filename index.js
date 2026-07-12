@@ -23,6 +23,7 @@ let lastVcFlush = 0;
 const { recordAchievement } = require('./utils/achievementStorage');
 const { loadData, saveData } = require('./utils/storage');
 const supabase = require('./utils/supabase');
+const { getGroupMembers } = require('./utils/wom');
 
 function logBotEvent(guildId, command, subcommand, details, discordId = null, displayName = null, source = 'button') {
   supabase.from('command_logs').insert({
@@ -351,7 +352,8 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ This request has already been resolved.', flags: 64 });
       }
 
-      await interaction.message.delete().catch(() => {});
+      const oldEmbed = interaction.message.embeds[0];
+      const updatedEmbed = EmbedBuilder.from(oldEmbed);
 
       if (action === 'welcome_modapprove') {
         if (!welcome.roleId) {
@@ -367,34 +369,73 @@ client.on('interactionCreate', async interaction => {
           ? `\n⚠️ **BLACKLIST MATCH**: Previously removed — "${blacklistHits[0].reason}" (RSN: ${blacklistHits[0].rsn ?? '?'} / ID: ${blacklistHits[0].discord_id ?? '?'})`
           : '';
 
+        updatedEmbed.setTitle('📋 Member Application — Approved').setColor(0x57F287)
+          .addFields({ name: 'Approved by', value: `<@${interaction.user.id}>`, inline: true });
+        await interaction.update({ embeds: [updatedEmbed], components: [] });
+
         try {
           const member = await interaction.guild.members.fetch(entry.userId);
           await member.roles.add(welcome.roleId);
           if (entry.rsn) await member.setNickname(entry.rsn).catch(() => {});
           console.log(`[welcome] Approved ${member.user.tag} (RSN: ${entry.rsn ?? 'none'}) by ${interaction.user.tag}`);
           logBotEvent(guildId, 'welcome', 'approve', `${entry.rsn ?? '?'} (<@${entry.userId}>)`, interaction.user.id, interaction.user.username);
-        if (entry.referrer) {
-          supabase.from('recruitments').insert({
-            guild_id: guildId,
-            recruiter_rsn: entry.referrer.toLowerCase(),
-            recruit_discord_id: entry.userId,
-            recruit_rsn: entry.rsn?.toLowerCase() ?? '',
-          }).then(() => {}, () => {});
-        }
+          if (entry.referrer) {
+            supabase.from('recruitments').insert({
+              guild_id: guildId,
+              recruiter_rsn: entry.referrer.toLowerCase(),
+              recruit_discord_id: entry.userId,
+              recruit_rsn: entry.rsn?.toLowerCase() ?? '',
+            }).then(() => {}, () => {});
+          }
         } catch (err) {
           console.error(`[welcome] Failed to grant role to ${entry.userId}: ${err.message}`);
         }
         await interaction.client.users.fetch(entry.userId)
           .then(u => u.send(`✅ You've been approved and now have full access to the clan. Welcome, **${entry.rsn ?? 'member'}**!`).catch(() => {}))
           .catch(() => {});
-        return interaction.reply({ content: `✅ Approved <@${entry.userId}>${entry.rsn ? ` (${entry.rsn})` : ''}.${blacklistWarn}`, flags: 64 });
+        return interaction.followUp({ content: `✅ Approved <@${entry.userId}>${entry.rsn ? ` (${entry.rsn})` : ''}.${blacklistWarn}`, flags: 64 });
       } else {
+        updatedEmbed.setTitle('📋 Member Application — Rejected').setColor(0xED4245)
+          .addFields({ name: 'Rejected by', value: `<@${interaction.user.id}>`, inline: true });
+        await interaction.update({ embeds: [updatedEmbed], components: [] });
         logBotEvent(guildId, 'welcome', 'reject', `${entry.rsn ?? '?'} (<@${entry.userId}>)`, interaction.user.id, interaction.user.username);
         await interaction.client.users.fetch(entry.userId)
           .then(u => u.send('❌ Your clan application was not approved at this time. Contact a mod if you have questions.').catch(() => {}))
           .catch(() => {});
-        return interaction.reply({ content: `❌ Rejected <@${entry.userId}>.`, flags: 64 });
+        return interaction.followUp({ content: `❌ Rejected <@${entry.userId}>.`, flags: 64 });
       }
+    }
+
+    // WOM departure kick/dismiss
+    if (action === 'wom_kick' || action === 'wom_dismiss') {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        return interaction.reply({ content: '❌ Only admins can do this.', flags: 64 });
+      }
+      const discordId = payload;
+      const guildId = interaction.guildId;
+      const oldEmbed = interaction.message.embeds[0];
+      const updatedEmbed = EmbedBuilder.from(oldEmbed);
+
+      if (action === 'wom_kick') {
+        try {
+          const member = await interaction.guild.members.fetch(discordId);
+          await member.kick(`Left WOM group — kicked by ${interaction.user.tag}`);
+          updatedEmbed.setTitle('🚪 Member Kicked').setColor(0xED4245)
+            .addFields({ name: 'Kicked by', value: `<@${interaction.user.id}>`, inline: true });
+          logBotEvent(guildId, 'moderation', 'wom-kick', `<@${discordId}>`, interaction.user.id, interaction.user.username);
+        } catch (err) {
+          updatedEmbed.setTitle('🚪 Kick Failed').setColor(0xc89b3c)
+            .addFields({ name: 'Error', value: err.message, inline: false });
+        }
+      } else {
+        updatedEmbed.setTitle('🚪 Dismissed — Still in Discord').setColor(0x5a5a7a)
+          .addFields({ name: 'Dismissed by', value: `<@${interaction.user.id}>`, inline: true });
+        logBotEvent(guildId, 'moderation', 'wom-dismiss', `<@${discordId}>`, interaction.user.id, interaction.user.username);
+      }
+
+      await supabase.from('wom_left_alerts').update({ resolved_at: new Date().toISOString() })
+        .eq('guild_id', guildId).eq('discord_id', discordId);
+      return interaction.update({ embeds: [updatedEmbed], components: [] });
     }
 
     // Raid complete button (admin only)
@@ -1408,17 +1449,89 @@ async function syncWomGroup() {
     })
     if (res.ok) {
       console.log('[wom] Group sync triggered')
+      checkWomDepartures().catch(e => console.error(`[wom-departures] ${e.message}`))
     } else {
       const body = await res.text().catch(() => '')
       const json = JSON.parse(body || '{}')
       if (json.code === 'NO_OUTDATED_MEMBERS') {
         console.log('[wom] Group sync skipped — all members up to date')
+        checkWomDepartures().catch(e => console.error(`[wom-departures] ${e.message}`))
       } else {
         console.warn(`[wom] Group sync failed (${res.status}): ${body}`)
       }
     }
   } catch (err) {
     console.error(`[wom] Group sync error: ${err.message}`)
+  }
+}
+
+async function checkWomDepartures() {
+  const guildId = process.env.CLAN_GUILD_ID
+  const groupId = process.env.WOM_GROUP_ID
+  if (!guildId || !groupId) return
+
+  const { data: cfg } = await supabase.from('guild_config')
+    .select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle()
+  if (!cfg?.inactivity_channel_id) return
+
+  let womMembers
+  try {
+    womMembers = await getGroupMembers()
+  } catch (err) {
+    console.error(`[wom-departures] Failed to fetch WOM members: ${err.message}`)
+    return
+  }
+  const womRsns = new Set((womMembers ?? []).map(m => m.player.username.toLowerCase()))
+
+  const [{ data: links }, { data: existingAlerts }] = await Promise.all([
+    supabase.from('rsn_links').select('discord_id, rsn').eq('guild_id', guildId).eq('primary_rsn', true),
+    supabase.from('wom_left_alerts').select('discord_id').eq('guild_id', guildId).is('resolved_at', null),
+  ])
+  if (!links?.length) return
+
+  const alreadyAlerted = new Set((existingAlerts ?? []).map(a => a.discord_id))
+  const departed = links.filter(l => !womRsns.has(l.rsn.toLowerCase()) && !alreadyAlerted.has(l.discord_id))
+  if (!departed.length) return
+
+  const [channel, guild] = await Promise.all([
+    client.channels.fetch(cfg.inactivity_channel_id).catch(() => null),
+    client.guilds.fetch(guildId).catch(() => null),
+  ])
+  if (!channel || !guild) return
+
+  for (const link of departed) {
+    let member
+    try {
+      member = await guild.members.fetch(link.discord_id)
+    } catch {
+      continue // not in server anymore, nothing to do
+    }
+
+    const roleList = member.roles.cache.filter(r => r.id !== guild.id).map(r => r.name).join(', ') || 'None'
+    const embed = new EmbedBuilder()
+      .setTitle('🚪 Member Left WOM Group')
+      .setDescription(`**${link.rsn}** is no longer in the WOM group but still has roles in Discord.`)
+      .setColor(0xED4245)
+      .addFields(
+        { name: 'Discord', value: `<@${link.discord_id}> (${member.user.tag})`, inline: true },
+        { name: 'RSN', value: link.rsn, inline: true },
+        { name: 'Roles', value: roleList, inline: false },
+      )
+      .setTimestamp()
+
+    await channel.send({
+      embeds: [embed],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`wom_kick:${link.discord_id}`).setLabel('🚫 Kick from Discord').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`wom_dismiss:${link.discord_id}`).setLabel('✅ Dismiss').setStyle(ButtonStyle.Secondary),
+      )],
+    })
+
+    await supabase.from('wom_left_alerts').upsert(
+      { guild_id: guildId, discord_id: link.discord_id, rsn: link.rsn },
+      { onConflict: 'guild_id,discord_id' }
+    )
+    console.log(`[wom-departures] Alerted: ${link.rsn} (${link.discord_id})`)
   }
 }
 
