@@ -1215,10 +1215,29 @@ async function postWeeklyRecap() {
 async function postModeratorRecap() {
   const guildId = process.env.CLAN_GUILD_ID;
   if (!guildId) return;
-  const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
+  const { data: cfg } = await supabase.from('guild_config')
+    .select('inactivity_channel_id, recap_excluded_roles')
+    .eq('guild_id', guildId).maybeSingle();
   if (!cfg?.inactivity_channel_id) return;
   const channel = await client.channels.fetch(cfg.inactivity_channel_id).catch(() => null);
   if (!channel) return;
+
+  const excludedRoles = new Set((cfg.recap_excluded_roles ?? []).map(r => r.toLowerCase()));
+
+  // Verify who is still in the Discord server
+  let activeDiscordIds = null;
+  try {
+    const guild = await client.guilds.fetch(guildId);
+    const members = await guild.members.fetch();
+    activeDiscordIds = new Set(members.keys());
+  } catch {}
+
+  // Verify which RSNs are still in the WOM group
+  let womRsns = null;
+  try {
+    const womMembers = await getGroupMembers();
+    womRsns = new Set(womMembers.map(m => m.player.username.toLowerCase()));
+  } catch {}
 
   const [
     { data: inactive },
@@ -1236,14 +1255,27 @@ async function postModeratorRecap() {
 
   const linkedDiscordIds = new Set((allLinks ?? []).map(l => l.discord_id));
   const linkedRsns = new Set((allLinks ?? []).map(l => l.rsn.toLowerCase()));
-  const unlinkedDiscord = (allDiscord ?? []).filter(d => !linkedDiscordIds.has(d.discord_id));
-  const unlinkedIngame = (allIngame ?? []).filter(i => !linkedRsns.has(i.rsn.toLowerCase()));
+
+  // Only show Discord members still in the server
+  const unlinkedDiscord = (allDiscord ?? []).filter(d =>
+    !linkedDiscordIds.has(d.discord_id) &&
+    (!activeDiscordIds || activeDiscordIds.has(d.discord_id))
+  );
+  // Only show in-game RSNs still in the WOM group
+  const unlinkedIngame = (allIngame ?? []).filter(i =>
+    !linkedRsns.has(i.rsn.toLowerCase()) &&
+    (!womRsns || womRsns.has(i.rsn.toLowerCase()))
+  );
 
   const embeds = [];
 
-  // Inactive members (exclude those with active absences)
+  // Inactive members — exclude absences, excluded roles, and anyone no longer in server
   const absentIds = new Set((activeAbsences ?? []).map(a => a.discord_id));
-  const inactiveFiltered = (inactive ?? []).filter(m => !absentIds.has(m.discord_id));
+  const inactiveFiltered = (inactive ?? []).filter(m =>
+    !absentIds.has(m.discord_id) &&
+    !excludedRoles.has((m.role_name ?? '').toLowerCase()) &&
+    (!activeDiscordIds || activeDiscordIds.has(m.discord_id))
+  );
   if (inactiveFiltered.length) {
     const lines = inactiveFiltered.map(m => {
       const last = m.last_message_at ? new Date(m.last_message_at).toLocaleDateString('en-GB') : 'never';
