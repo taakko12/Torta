@@ -112,6 +112,34 @@ function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) 
     if (onWomCheck) onWomCheck().catch(e => console.error(`[wom-check] ${e.message}`));
   });
 
+  app.post('/api/loot-review-notify', async (req, res) => {
+    const secret = process.env.BOT_ADMIN_SECRET;
+    if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
+    const { guildId, type, label, reason, requestedBy } = req.body;
+    res.send('OK');
+    try {
+      const { data: config } = await supabase
+        .from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).single();
+      const channelId = config?.inactivity_channel_id;
+      if (!channelId) return;
+      const channel = await discordClient.channels.fetch(channelId);
+      if (!channel) return;
+      const embed = new EmbedBuilder()
+        .setTitle('🚩 Loot Review Requested')
+        .setColor(0xFEE75C)
+        .addFields(
+          { name: 'Entry', value: label, inline: true },
+          { name: 'Type', value: type === 'drop' ? 'Confirmed Drop' : 'Submission', inline: true },
+          { name: 'Reason', value: reason },
+        )
+        .setFooter({ text: `Requested by ${requestedBy} · https://tortapounders.vercel.app/admin/loot` })
+        .setTimestamp();
+      await channel.send({ embeds: [embed] });
+    } catch (err) {
+      console.error(`[loot-review-notify] ${err.message}`);
+    }
+  });
+
   app.post('/api/feedback-notify', async (req, res) => {
     const secret = process.env.BOT_ADMIN_SECRET;
     if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
