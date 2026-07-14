@@ -101,6 +101,17 @@ const supabase = require('./supabase');
 
 const FEEDBACK_COLORS = { Events: 0x5865F2, Discord: 0x57F287, Bot: 0xFEE75C, Website: 0xEB459E };
 
+// 60-second cache so we don't hit Supabase on every clan chat message
+const chatEnabledCache = new Map();
+async function isChatTrackingEnabled(guildId) {
+  const c = chatEnabledCache.get(guildId);
+  if (c && Date.now() < c.expires) return c.value;
+  const { data } = await supabase.from('guild_config').select('clanchat_tracking_enabled').eq('guild_id', guildId).maybeSingle();
+  const value = !!data?.clanchat_tracking_enabled;
+  chatEnabledCache.set(guildId, { value, expires: Date.now() + 60_000 });
+  return value;
+}
+
 function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) {
   const app = express();
   app.use(express.json());
@@ -218,6 +229,7 @@ function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) 
           console.error(`[trackscape] Broadcast send failed for guild ${guild.guildId}: ${err.message}`);
         }
       } else {
+        if (!await isChatTrackingEnabled(guild.guildId)) continue;
         if (!guild.clanChatChannelId) continue;
         logIngameMessage(guild.guildId, sender).catch(() => {});
         const embed = new EmbedBuilder()

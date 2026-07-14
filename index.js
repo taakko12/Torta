@@ -198,6 +198,8 @@ client.once('clientReady', () => {
     const intervalMs = (data.scheduledJobs?.vcFlush?.intervalMinutes ?? 5) * 60_000;
     if (Date.now() - lastVcFlush < intervalMs) return;
     lastVcFlush = Date.now();
+    const { data: vcCfg } = guildId ? await supabase.from('guild_config').select('vc_tracking_enabled').eq('guild_id', guildId).maybeSingle() : {};
+    if (!vcCfg?.vc_tracking_enabled) return;
     const now = Date.now();
     for (const [userId, session] of vcSessions) {
       const lastFlushed = session.lastFlushed ?? session.joinedAt;
@@ -938,6 +940,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
   const member = newState.member ?? oldState.member;
   if (!member || member.user.bot) return;
+
+  const { data: vcCfg } = await supabase.from('guild_config').select('vc_tracking_enabled').eq('guild_id', guildId).maybeSingle();
+  if (!vcCfg?.vc_tracking_enabled) return;
   const userId = member.id;
 
   const joined = !oldState.channelId && newState.channelId;
