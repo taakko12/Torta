@@ -1185,36 +1185,56 @@ async function postWeeklyRecap() {
   const { data: cfg } = await supabase.from('guild_config').select('recap_channel_id').eq('guild_id', guildId).maybeSingle();
   if (!cfg?.recap_channel_id) return;
 
-  const [{ data: discord }, { data: ingame }, { data: vc }, { data: topLoot }] = await Promise.all([
-    supabase.from('discord_activity').select('display_name, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3),
-    supabase.from('ingame_activity').select('rsn, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3),
-    supabase.from('vc_activity').select('display_name, month_minutes').eq('guild_id', guildId).order('month_minutes', { ascending: false }).limit(3),
-    supabase.from('drops').select('player_name, gp_value, item_name').eq('guild_id', guildId).gte('recorded_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('gp_value', { ascending: false }).limit(3),
+  const guildData = await loadData(guildId).catch(() => ({}));
+  const sections = guildData.scheduledJobs?.weeklyRecap?.sections ?? {};
+  const show = k => sections[k] !== false; // default on until a mod turns it off
+
+  const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const skip = Promise.resolve({ data: null });
+
+  const [{ data: discord }, { data: ingame }, { data: vc }, { data: topLoot }, { data: deathRows }] = await Promise.all([
+    show('discordChatters') ? supabase.from('discord_activity').select('display_name, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3) : skip,
+    show('ingameChatters')  ? supabase.from('ingame_activity').select('rsn, month_count').eq('guild_id', guildId).order('month_count', { ascending: false }).limit(3) : skip,
+    show('vcTime')          ? supabase.from('vc_activity').select('display_name, month_minutes').eq('guild_id', guildId).order('month_minutes', { ascending: false }).limit(3) : skip,
+    show('topDrops')        ? supabase.from('drops').select('player_name, gp_value, item_name').eq('guild_id', guildId).gte('recorded_at', weekAgo).order('gp_value', { ascending: false }).limit(3) : skip,
+    show('deaths')          ? supabase.from('planks').select('player_name').eq('guild_id', guildId).gte('recorded_at', weekAgo) : skip,
   ]);
 
   const medals = ['🥇', '🥈', '🥉'];
   const fmtRows = (rows, nameKey, countKey, suffix) =>
     rows?.length ? rows.map((r, i) => `${medals[i]} **${r[nameKey]}** — ${Number(r[countKey]).toLocaleString()} ${suffix}`).join('\n') : 'No data yet';
 
+  let topDeaths = null;
+  if (deathRows?.length) {
+    const counts = {};
+    for (const r of deathRows) counts[r.player_name] = (counts[r.player_name] ?? 0) + 1;
+    topDeaths = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }
+
   const channel = await client.channels.fetch(cfg.recap_channel_id).catch(() => null);
   if (!channel) return;
 
-  const embeds = [new EmbedBuilder()
-    .setTitle('📊 Weekly Activity Recap')
-    .setColor(0x7c5ce8)
-    .addFields(
-      { name: '💬 Top Discord Chatters', value: fmtRows(discord, 'display_name', 'month_count', 'msgs'), inline: true },
-      { name: '⚔️ Top In-Game Chatters', value: fmtRows(ingame, 'rsn', 'month_count', 'msgs'), inline: true },
-      { name: '🔊 Most VC Time', value: fmtRows(vc, 'display_name', 'month_minutes', 'min'), inline: true },
-    )
-    .setFooter({ text: 'Based on activity so far this month' })
-  ];
+  const fields = [];
+  if (show('discordChatters')) fields.push({ name: '💬 Top Discord Chatters', value: fmtRows(discord, 'display_name', 'month_count', 'msgs'), inline: true });
+  if (show('ingameChatters'))  fields.push({ name: '⚔️ Top In-Game Chatters', value: fmtRows(ingame, 'rsn', 'month_count', 'msgs'), inline: true });
+  if (show('vcTime'))          fields.push({ name: '🔊 Most VC Time', value: fmtRows(vc, 'display_name', 'month_minutes', 'min'), inline: true });
+  if (show('deaths'))          fields.push({
+    name: '💀 Most Deaths This Week',
+    value: topDeaths?.length ? topDeaths.map(([name, count], i) => `${medals[i]} **${name}** — ${count} death${count > 1 ? 's' : ''}`).join('\n') : 'No deaths this week 🎉',
+    inline: true,
+  });
 
-  if (topLoot?.length) {
+  const embeds = [];
+  if (fields.length) {
+    embeds.push(new EmbedBuilder().setTitle('📊 Weekly Activity Recap').setColor(0x7c5ce8).addFields(fields).setFooter({ text: 'Based on activity so far this month' }));
+  }
+
+  if (show('topDrops') && topLoot?.length) {
     const lootLines = topLoot.map((d, i) => `${medals[i]} **${d.player_name}** — ${d.item_name ?? 'drop'} (${Number(d.gp_value).toLocaleString()} gp)`).join('\n');
     embeds.push(new EmbedBuilder().setTitle('💰 Top Drops This Week').setDescription(lootLines).setColor(0xc89b3c));
   }
 
+  if (!embeds.length) return;
   embeds[embeds.length - 1].setTimestamp();
   await channel.send({ embeds });
   console.log('[recap] Weekly recap posted');
