@@ -118,6 +118,7 @@ client.once('clientReady', () => {
     for (const cfg of configs ?? []) {
       if (cfg.last_auto_roll_date === today) continue;
       const guildData = await loadData(cfg.guild_id);
+      if (guildData.scheduledJobs?.pollRoll?.enabled === false) continue;
       const pollDay  = guildData.scheduledJobs?.pollRoll?.day  ?? 6;  // default Saturday
       const pollHour = guildData.scheduledJobs?.pollRoll?.hour ?? 12; // default 12 UTC
       if (now.getUTCDay() !== pollDay || now.getUTCHours() < pollHour) continue;
@@ -171,6 +172,7 @@ client.once('clientReady', () => {
   setInterval(async () => {
     const guildId = process.env.CLAN_GUILD_ID;
     const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    if (data.scheduledJobs?.womSync?.enabled === false) return;
     const intervalMs = (data.scheduledJobs?.womSync?.intervalHours ?? 1) * 3_600_000;
     if (Date.now() - lastWomSync >= intervalMs) {
       lastWomSync = Date.now();
@@ -195,6 +197,7 @@ client.once('clientReady', () => {
   setInterval(async () => {
     const guildId = process.env.CLAN_GUILD_ID;
     const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    if (data.scheduledJobs?.vcFlush?.enabled === false) return;
     const intervalMs = (data.scheduledJobs?.vcFlush?.intervalMinutes ?? 5) * 60_000;
     if (Date.now() - lastVcFlush < intervalMs) return;
     lastVcFlush = Date.now();
@@ -222,8 +225,8 @@ client.once('clientReady', () => {
     const weeklyHour = jobs.weeklyRecap?.hour ?? 20; // default 8PM UTC
     const modDay     = jobs.modRecap?.day     ?? 1;  // default Monday
     const modHour    = jobs.modRecap?.hour    ?? 9;  // default 9AM UTC
-    if (now.getUTCDay() === weeklyDay  && now.getUTCHours() === weeklyHour) postWeeklyRecap().catch(e => console.error(`[recap] ${e.message}`));
-    if (now.getUTCDay() === modDay     && now.getUTCHours() === modHour)    postModeratorRecap().catch(e => console.error(`[modrecap] ${e.message}`));
+    if (jobs.weeklyRecap?.enabled !== false && now.getUTCDay() === weeklyDay && now.getUTCHours() === weeklyHour) postWeeklyRecap().catch(e => console.error(`[recap] ${e.message}`));
+    if (jobs.modRecap?.enabled    !== false && now.getUTCDay() === modDay    && now.getUTCHours() === modHour)    postModeratorRecap().catch(e => console.error(`[modrecap] ${e.message}`));
   }, 3_600_000);
 
   // Monthly reset — day/hour configurable via website settings
@@ -231,6 +234,7 @@ client.once('clientReady', () => {
     const now = new Date();
     const guildId = process.env.CLAN_GUILD_ID;
     const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    if (data.scheduledJobs?.monthlyReset?.enabled === false) return;
     const dayOfMonth = data.scheduledJobs?.monthlyReset?.dayOfMonth ?? 1;
     const hour       = data.scheduledJobs?.monthlyReset?.hour       ?? 0;
     if (now.getUTCDate() !== dayOfMonth || now.getUTCHours() !== hour) return;
