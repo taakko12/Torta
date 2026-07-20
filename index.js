@@ -1,7 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
 const { getRaid, updateRaid, getUpcomingRaids } = require('./utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('./utils/raidEmbed');
 const { loadPanel } = require('./utils/rolePanelStorage');
@@ -701,6 +701,56 @@ client.on('interactionCreate', async interaction => {
     }).catch(err => console.error(`[button] Failed to update raid embed: ${err.message}`));
 
     return;
+  }
+
+  // WOM departure alert — "move to a role instead" select menu
+  if (interaction.isRoleSelectMenu() && interaction.customId.startsWith('wom_move_role:')) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+      return interaction.reply({ content: '❌ Only admins can do this.', flags: 64 });
+    }
+    const discordId = interaction.customId.split(':')[1];
+    const guildId = interaction.guildId;
+    const toRoleId = interaction.values[0];
+
+    const { data: alertRow } = await supabase.from('wom_left_alerts')
+      .select('rsn').eq('guild_id', guildId).eq('discord_id', discordId).is('resolved_at', null).maybeSingle();
+    if (!alertRow) {
+      return interaction.reply({ content: '⚠️ Already resolved.', flags: 64 });
+    }
+
+    let targetMember;
+    try {
+      targetMember = await interaction.guild.members.fetch(discordId);
+    } catch {
+      return interaction.reply({ content: '❌ Member is no longer in the server.', flags: 64 });
+    }
+
+    const toRole = interaction.guild.roles.cache.get(toRoleId);
+    const fromRole = targetMember.roles.cache.filter(r => r.id !== interaction.guild.id).sort((a, b) => b.position - a.position).first() ?? null;
+    const GUEST_ROLE_ID = process.env.GUEST_ROLE_ID || '1519867633069981818';
+
+    try {
+      await targetMember.roles.add(toRoleId);
+      if (fromRole && fromRole.id !== toRoleId) await targetMember.roles.remove(fromRole.id).catch(() => {});
+      if (GUEST_ROLE_ID !== toRoleId) await targetMember.roles.remove(GUEST_ROLE_ID).catch(() => {});
+    } catch (err) {
+      return interaction.reply({ content: `❌ Failed to update roles: ${err.message}`, flags: 64 });
+    }
+
+    await supabase.from('wom_left_alerts').update({ resolved_at: new Date().toISOString() }).eq('guild_id', guildId).eq('discord_id', discordId);
+    await supabase.from('promotions').insert({
+      guild_id: guildId, discord_id: discordId, display_name: targetMember.displayName, rsn: alertRow.rsn,
+      from_role: fromRole?.name ?? null, to_role: toRole?.name ?? toRoleId,
+      promoted_by_name: interaction.user.username,
+    });
+    logBotEvent(guildId, 'moderation', 'wom-move-role', `<@${discordId}> → ${toRole?.name ?? toRoleId}`, interaction.user.id, interaction.user.username);
+
+    const oldEmbed = interaction.message.embeds[0];
+    const updatedEmbed = EmbedBuilder.from(oldEmbed)
+      .setTitle('🔀 Member Moved to New Role').setColor(0x7c5ce8)
+      .addFields({ name: 'Moved by', value: `<@${interaction.user.id}> → @${toRole?.name ?? 'role'}`, inline: true });
+
+    return interaction.update({ embeds: [updatedEmbed], components: [] });
   }
 
   // RSN modal submit (from "I Agree" button)
@@ -1669,10 +1719,15 @@ async function checkWomDepartures() {
 
     await channel.send({
       embeds: [embed],
-      components: [new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`wom_kick:${link.discord_id}`).setLabel('🚫 Kick from Discord').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(`wom_dismiss:${link.discord_id}`).setLabel('✅ Dismiss').setStyle(ButtonStyle.Secondary),
-      )],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`wom_kick:${link.discord_id}`).setLabel('🚫 Kick from Discord').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`wom_dismiss:${link.discord_id}`).setLabel('✅ Dismiss').setStyle(ButtonStyle.Secondary),
+        ),
+        new ActionRowBuilder().addComponents(
+          new RoleSelectMenuBuilder().setCustomId(`wom_move_role:${link.discord_id}`).setPlaceholder('Move to a role instead…').setMinValues(1).setMaxValues(1),
+        ),
+      ],
     })
 
     await supabase.from('wom_left_alerts').upsert(
