@@ -20,10 +20,13 @@ const { logDiscordMessage, logDiscordMessageAlltime, logIngameMessage, logVcTime
 const vcSessions = new Map(); // discordId -> { joinedAt, guildId, displayName, roleName }
 let lastWomSync = 0;
 let lastVcFlush = 0;
+let lastCompWinnerCheck = 0;
 const { recordAchievement } = require('./utils/achievementStorage');
-const { loadData, saveData } = require('./utils/storage');
+const { loadData, saveData, getBoard } = require('./utils/storage');
+const { refreshLeaderboardMessage } = require('./utils/updateLeaderboard');
 const supabase = require('./utils/supabase');
 const { getGroupMembers } = require('./utils/wom');
+const { checkEndedCompetitions, findDiscordId } = require('./utils/compWinners');
 
 function logBotEvent(guildId, command, subcommand, details, discordId = null, displayName = null, source = 'button') {
   supabase.from('command_logs').insert({
@@ -178,6 +181,17 @@ client.once('clientReady', () => {
       lastWomSync = Date.now();
       syncWomGroup().catch(e => console.error(`[wom] sync failed: ${e.message}`));
     }
+  }, 300_000);
+
+  setTimeout(() => { lastCompWinnerCheck = Date.now(); checkEndedCompetitions(client).catch(e => console.error(`[comp-winners] ${e.message}`)); }, 90_000);
+  setInterval(async () => {
+    const guildId = process.env.CLAN_GUILD_ID;
+    const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    if (data.scheduledJobs?.compWinnerCheck?.enabled === false) return;
+    const intervalMs = (data.scheduledJobs?.compWinnerCheck?.intervalMinutes ?? 30) * 60_000;
+    if (Date.now() - lastCompWinnerCheck < intervalMs) return;
+    lastCompWinnerCheck = Date.now();
+    checkEndedCompetitions(client).catch(e => console.error(`[comp-winners] ${e.message}`));
   }, 300_000);
 
   // Seed vcSessions for members already in VC at startup
@@ -446,6 +460,64 @@ client.on('interactionCreate', async interaction => {
 
       await supabase.from('wom_left_alerts').update({ resolved_at: new Date().toISOString() })
         .eq('guild_id', guildId).eq('discord_id', discordId);
+      return interaction.update({ embeds: [updatedEmbed], components: [] });
+    }
+
+    // BOTW/SOTW winner approve/reject/recheck
+    if (action === 'comp_winner_approve' || action === 'comp_winner_reject' || action === 'comp_winner_recheck') {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        return interaction.reply({ content: '❌ Only admins can do this.', flags: 64 });
+      }
+      const winnerId = payload;
+      const guildId = interaction.guildId;
+      const { data: row } = await supabase.from('comp_winners').select('*').eq('id', winnerId).maybeSingle();
+      if (!row) return interaction.reply({ content: '❌ This winner record no longer exists.', flags: 64 });
+      if (row.status !== 'pending') {
+        return interaction.reply({ content: `⚠️ Already resolved (${row.status}).`, flags: 64 });
+      }
+
+      const compLabel = row.comp_type === 'botw' ? 'Boss of the Week' : 'Skill of the Week';
+      const compColor = row.comp_type === 'botw' ? 0xed4245 : 0x57f287;
+      const compEmoji = row.comp_type === 'botw' ? '💀' : '📈';
+      const oldEmbed = interaction.message.embeds[0];
+      const updatedEmbed = EmbedBuilder.from(oldEmbed);
+
+      if (action === 'comp_winner_recheck') {
+        const found = await findDiscordId(guildId, row.winner_rsn);
+        if (!found) {
+          return interaction.reply({ content: `❌ Still no Discord link found for RSN **${row.winner_rsn}**.`, flags: 64 });
+        }
+        await supabase.from('comp_winners').update({ winner_discord_id: found }).eq('id', row.id);
+        updatedEmbed.spliceFields(2, 1, { name: 'Winner', value: `<@${found}> (${row.winner_rsn})`, inline: false });
+        const components = [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`comp_winner_approve:${row.id}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`comp_winner_reject:${row.id}`).setLabel('❌ Reject').setStyle(ButtonStyle.Danger),
+        )];
+        return interaction.update({ embeds: [updatedEmbed], components });
+      }
+
+      if (action === 'comp_winner_approve') {
+        if (!row.winner_discord_id) {
+          return interaction.reply({ content: '❌ No Discord account linked yet — recheck or link them first.', flags: 64 });
+        }
+        const data = await loadData(guildId);
+        const board = getBoard(data, row.comp_type);
+        if (!board.users[row.winner_discord_id]) board.users[row.winner_discord_id] = { wins: 0 };
+        board.users[row.winner_discord_id].wins += 1;
+        await saveData(guildId, data);
+        refreshLeaderboardMessage(interaction.client, board, { title: `${compEmoji} ${compLabel} Leaderboard`, color: compColor });
+        updatedEmbed.setTitle(`✅ ${compEmoji} ${compLabel} Winner Approved`).setColor(0x57F287)
+          .addFields({ name: 'Approved by', value: `<@${interaction.user.id}>`, inline: true });
+        logBotEvent(guildId, 'moderation', 'comp-winner-approve', `<@${row.winner_discord_id}> (${row.title})`, interaction.user.id, interaction.user.username);
+        await supabase.from('comp_winners').update({ status: 'approved', resolved_at: new Date().toISOString(), resolved_by_name: interaction.user.username }).eq('id', row.id);
+        return interaction.update({ embeds: [updatedEmbed], components: [] });
+      }
+
+      // comp_winner_reject
+      updatedEmbed.setTitle(`❌ ${compEmoji} ${compLabel} Winner Rejected`).setColor(0x5a5a7a)
+        .addFields({ name: 'Rejected by', value: `<@${interaction.user.id}>`, inline: true });
+      logBotEvent(guildId, 'moderation', 'comp-winner-reject', row.title, interaction.user.id, interaction.user.username);
+      await supabase.from('comp_winners').update({ status: 'rejected', resolved_at: new Date().toISOString(), resolved_by_name: interaction.user.username }).eq('id', row.id);
       return interaction.update({ embeds: [updatedEmbed], components: [] });
     }
 
