@@ -280,4 +280,4 @@ function sendToGame(code, sender, message) {
   }
 }
 
-module.exports = { startTrackscapeServer, sendToGame };
+module.exports = { startTrackscapeServer, sendToGame, isChatTrackingEnabled };

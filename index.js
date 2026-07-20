@@ -8,7 +8,7 @@ const { loadPanel } = require('./utils/rolePanelStorage');
 const { getPlanksChannelId, recordDeath } = require('./utils/plankStorage');
 const { getDropsChannelId, recordDrop, parseLootEmbed, parseLootItems, parseLootImage, parseLootScreenshot, parseLootPlayer, parseLootItem } = require('./utils/dropStorage');
 const { loadWelcome, addWelcomePending, resolveWelcomePending } = require('./utils/welcomeStorage');
-const { startTrackscapeServer, sendToGame } = require('./utils/trackscapeServer');
+const { startTrackscapeServer, sendToGame, isChatTrackingEnabled } = require('./utils/trackscapeServer');
 const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
@@ -868,8 +868,8 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // Track Discord message activity (clan guild only)
-  if (!message.author?.bot && !message.webhookId && guildId === process.env.CLAN_GUILD_ID) {
+  // Track Discord message activity (clan guild only) — same toggle as in-game chat tracking
+  if (!message.author?.bot && !message.webhookId && guildId === process.env.CLAN_GUILD_ID && await isChatTrackingEnabled(guildId)) {
     const displayName = message.member?.displayName ?? message.author?.username ?? 'Unknown';
     const topRole = message.member?.roles?.cache?.filter(r => r.name !== '@everyone')?.sort((a, b) => b.position - a.position)?.first()?.name ?? null;
     logDiscordMessage(guildId, message.author.id, displayName, topRole).catch(() => {});
@@ -1259,7 +1259,14 @@ async function postWeeklyRecap() {
 
   const guildData = await loadData(guildId).catch(() => ({}));
   const sections = guildData.scheduledJobs?.weeklyRecap?.sections ?? {};
-  const show = k => sections[k] !== false; // default on until a mod turns it off
+  const { data: trackingCfg } = await supabase.from('guild_config').select('clanchat_tracking_enabled, vc_tracking_enabled').eq('guild_id', guildId).maybeSingle();
+  const CHAT_SECTIONS = new Set(['discordChatters', 'ingameChatters']);
+  const show = k => {
+    if (sections[k] === false) return false;
+    if (CHAT_SECTIONS.has(k) && !trackingCfg?.clanchat_tracking_enabled) return false;
+    if (k === 'vcTime' && !trackingCfg?.vc_tracking_enabled) return false;
+    return true;
+  };
 
   const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
   const skip = Promise.resolve({ data: null });
