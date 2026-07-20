@@ -28,9 +28,8 @@ module.exports = {
       const msg = await ch.messages.fetch(event.message_id).catch(() => null);
       if (!msg) continue;
 
-      const dateStr = event.scheduled_at
-        ? new Date(event.scheduled_at).toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
-        : 'TBD';
+      const ts = event.scheduled_at ? Math.floor(new Date(event.scheduled_at).getTime() / 1000) : null;
+      const dateStr = ts ? `<t:${ts}:F> (<t:${ts}:R>)` : 'TBD';
       const fields = [
         { name: 'When', value: dateStr, inline: true },
         { name: 'Type', value: event.event_type || 'Event', inline: true },
