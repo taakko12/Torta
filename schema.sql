@@ -445,3 +445,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS raid_guides_thread_dedup
 
 ALTER TABLE raid_guides ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public read raid_guides" ON raid_guides FOR SELECT USING (true);
+
+-- =====================================================================
+-- Competition start announcements (public "X of the Week has begun!" post)
+-- Dedup guard so a restart near a competition's startsAt doesn't double-post.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS comp_start_announcements (
+  guild_id       text NOT NULL,
+  competition_id integer NOT NULL,
+  announced_at   timestamptz DEFAULT now(),
+  PRIMARY KEY (guild_id, competition_id)
+);
+
+ALTER TABLE comp_start_announcements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read comp_start_announcements" ON comp_start_announcements FOR SELECT USING (true);

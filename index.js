@@ -21,12 +21,14 @@ const vcSessions = new Map(); // discordId -> { joinedAt, guildId, displayName, 
 let lastWomSync = 0;
 let lastVcFlush = 0;
 let lastCompWinnerCheck = 0;
+let lastCompStartCheck = 0;
 const { recordAchievement } = require('./utils/achievementStorage');
 const { loadData, saveData, getBoard } = require('./utils/storage');
 const { refreshLeaderboardMessage } = require('./utils/updateLeaderboard');
 const supabase = require('./utils/supabase');
 const { getGroupMembers } = require('./utils/wom');
 const { checkEndedCompetitions, findDiscordId } = require('./utils/compWinners');
+const { checkStartedCompetitions } = require('./utils/compAnnouncements');
 
 function logBotEvent(guildId, command, subcommand, details, discordId = null, displayName = null, source = 'button') {
   supabase.from('command_logs').insert({
@@ -192,6 +194,17 @@ client.once('clientReady', () => {
     if (Date.now() - lastCompWinnerCheck < intervalMs) return;
     lastCompWinnerCheck = Date.now();
     checkEndedCompetitions(client).catch(e => console.error(`[comp-winners] ${e.message}`));
+  }, 300_000);
+
+  setTimeout(() => { lastCompStartCheck = Date.now(); checkStartedCompetitions(client).catch(e => console.error(`[comp-announce] ${e.message}`)); }, 90_000);
+  setInterval(async () => {
+    const guildId = process.env.CLAN_GUILD_ID;
+    const data = guildId ? await loadData(guildId).catch(() => ({})) : {};
+    if (data.scheduledJobs?.compStartCheck?.enabled === false) return;
+    const intervalMs = (data.scheduledJobs?.compStartCheck?.intervalMinutes ?? 30) * 60_000;
+    if (Date.now() - lastCompStartCheck < intervalMs) return;
+    lastCompStartCheck = Date.now();
+    checkStartedCompetitions(client).catch(e => console.error(`[comp-announce] ${e.message}`));
   }, 300_000);
 
   // Seed vcSessions for members already in VC at startup

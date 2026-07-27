@@ -2,7 +2,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const supabase = require('./supabase');
 const { getGroupCompetitions, getCompetitionStandings, BOSS_METRICS, SKILL_METRICS } = require('./wom');
 const { BOTW_DISPLAY, SOTW_DISPLAY } = require('./pollHelpers');
-const { humanize, formatNumber } = require('./womEmbeds');
+const { humanize, formatNumber, buildCompetitionEndedEmbed } = require('./womEmbeds');
 
 const BOTW_COLOR = 0xed4245;
 const SOTW_COLOR = 0x57f287;
@@ -66,8 +66,8 @@ async function checkEndedCompetitions(client) {
   const guildId = process.env.CLAN_GUILD_ID;
   if (!guildId || !process.env.WOM_GROUP_ID) return;
 
-  const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).maybeSingle();
-  if (!cfg?.inactivity_channel_id) return;
+  const { data: cfg } = await supabase.from('guild_config').select('inactivity_channel_id, poll_channel_id').eq('guild_id', guildId).maybeSingle();
+  if (!cfg?.inactivity_channel_id && !cfg?.poll_channel_id) return;
 
   let competitions;
   try {
@@ -115,12 +115,31 @@ async function checkEndedCompetitions(client) {
       ? group.map(c => metricLabel(compType, c.metric)).join(' + ')
       : metricLabel(compType, primary.metric);
 
+    if (cfg.poll_channel_id) {
+      try {
+        const pollChannel = await client.channels.fetch(cfg.poll_channel_id);
+        const unit = compType === 'botw' ? 'kc' : 'xp';
+        await pollChannel.send({ embeds: [buildCompetitionEndedEmbed({ compType, label, standings: standingsList, unit })] });
+      } catch (err) {
+        console.error(`[comp-winners] Failed to post public results for ${label}: ${err.message}`);
+      }
+    }
+
     if (!top || top.gained <= 0) {
       await supabase.from('comp_winners').insert(competitionIds.map(id => ({
         guild_id: guildId, competition_id: id, comp_type: compType, metric: primary.metric,
         title: label, ends_at: primary.endsAt, status: 'no_participants',
       })));
       console.log(`[comp-winners] ${label} ended with no participants — skipped`);
+      continue;
+    }
+
+    if (!cfg.inactivity_channel_id) {
+      // No mod channel configured — record as unactioned so this group isn't reprocessed, but skip the approval post.
+      await supabase.from('comp_winners').insert(competitionIds.map(id => ({
+        guild_id: guildId, competition_id: id, comp_type: compType, metric: primary.metric,
+        title: label, ends_at: primary.endsAt, status: 'no_mod_channel',
+      })));
       continue;
     }
 
