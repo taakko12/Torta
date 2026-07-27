@@ -1,39 +1,56 @@
+const supabase = require('./supabase');
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULT = { channelId: null, messageId: null, roleId: null, modChannelId: null, pending: {} };
-
-function dataPath(guildId) {
-  return path.join(__dirname, '..', 'data', guildId, 'welcome.json');
+function pendingPath(guildId) {
+  const dir = path.join(__dirname, '..', 'data', guildId);
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, 'welcome_pending.json');
 }
 
-function loadWelcome(guildId) {
-  const p = dataPath(guildId);
-  if (!fs.existsSync(p)) {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(DEFAULT, null, 2));
-    return { ...DEFAULT };
-  }
-  return JSON.parse(fs.readFileSync(p, 'utf-8'));
+function loadPendingJson(guildId) {
+  try { return JSON.parse(fs.readFileSync(pendingPath(guildId), 'utf8')); } catch { return {}; }
 }
 
-function saveWelcome(guildId, data) {
-  const p = dataPath(guildId);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(data, null, 2));
+function savePendingJson(guildId, pending) {
+  fs.writeFileSync(pendingPath(guildId), JSON.stringify(pending));
+}
+
+async function loadWelcome(guildId) {
+  const { data } = await supabase.from('guild_config')
+    .select('welcome_role_id, welcome_mod_channel_id, welcome_channel_id, welcome_message_id, rsn_channel_id')
+    .eq('guild_id', guildId).maybeSingle();
+  return {
+    roleId: data?.welcome_role_id ?? null,
+    modChannelId: data?.welcome_mod_channel_id ?? null,
+    channelId: data?.welcome_channel_id ?? null,
+    messageId: data?.welcome_message_id ?? null,
+    rsnChannelId: data?.rsn_channel_id ?? null,
+    pending: loadPendingJson(guildId),
+  };
+}
+
+async function saveWelcome(guildId, config) {
+  await supabase.from('guild_config').upsert({
+    guild_id: guildId,
+    welcome_role_id: config.roleId ?? null,
+    welcome_mod_channel_id: config.modChannelId ?? null,
+    welcome_channel_id: config.channelId ?? null,
+    welcome_message_id: config.messageId ?? null,
+    rsn_channel_id: config.rsnChannelId ?? null,
+  }, { onConflict: 'guild_id' });
+  savePendingJson(guildId, config.pending ?? {});
 }
 
 function addWelcomePending(guildId, data, messageId, entry) {
-  if (!data.pending) data.pending = {};
   data.pending[messageId] = entry;
-  saveWelcome(guildId, data);
+  savePendingJson(guildId, data.pending);
 }
 
 function resolveWelcomePending(guildId, data, messageId) {
-  if (!data.pending) data.pending = {};
   const entry = data.pending[messageId] ?? null;
   delete data.pending[messageId];
-  saveWelcome(guildId, data);
+  savePendingJson(guildId, data.pending);
   return entry;
 }
 

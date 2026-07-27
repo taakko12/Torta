@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(pm2 logs *)",
+      "Bash(journalctl -u clan-bot --no-pager -n 30)",
+      "Bash(pm2 list *)",
+      "Bash(ls /home/trey/Documents/clan-leaderboard-bot/*.log 2>/dev/null; find /home/trey -name \"*.log\" -newer /home/trey/Documents/clan-leaderboard-bot/index.js 2>/dev/null | head -5)",
+      "Read(//home/trey/**)"
+    ]
+  },
   "enabledPlugins": {
     "ponytail@ponytail": true
   }

@@ -1,6 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { loadData, saveData } = require('./storage');
 const supabase = require('./supabase');
+const { insertPick } = require('./pollStorage');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -214,7 +215,7 @@ function buildPollEmbed(poll) {
       { name: 'Voting closes', value: `<t:${cutoff_unix}:f> (<t:${cutoff_unix}:R>)` },
       { name: 'Recent picks (excluded)', value: (recent_names ?? []).length > 0 ? recent_names.join(', ') : 'None yet' },
     )
-    .setFooter({ text: 'Vote for your pick | Mods: Accept Winner or Reroll for new options' })
+    .setFooter({ text: 'Vote for your pick | Mods: Accept Winner when ready' })
     .setTimestamp();
 }
 
@@ -230,7 +231,6 @@ function buildPollComponents(poll) {
   );
   const controlRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`${poll_type}_accept`).setLabel('✅ Accept Winner').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`${poll_type}_reroll`).setLabel('🔄 Reroll Options').setStyle(ButtonStyle.Secondary),
   );
   return [voteRow, controlRow];
 }
@@ -333,11 +333,13 @@ async function lockInPoll(poll, client, autoClose = false) {
     console.error(`[${tag}] Failed to update Discord message: ${e.message}`);
   }
 
-  // Persist winner to guild history
-  const data = loadData(guild_id);
+  // Persist winner to comp_picks (reliable) + guild_data (legacy backup)
+  await insertPick(guild_id, poll_type, winner);
+  for (const p of partners) await insertPick(guild_id, poll_type, p);
+  const data = await loadData(guild_id);
   const histKey = poll_type === 'botw' ? 'botwHistory' : 'sotwHistory';
   data[histKey] = [...(pre_roll_history ?? []), winner].slice(-HISTORY_SIZE * 2);
-  saveData(guild_id, data);
+  await saveData(guild_id, data);
 
   console.log(`[${tag}] Locked in: ${winner}${autoClose ? ' (auto)' : ''}`);
 }

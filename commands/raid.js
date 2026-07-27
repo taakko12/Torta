@@ -1,5 +1,5 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { loadRaids, createRaid } = require('../utils/raidStorage');
+const { SlashCommandBuilder } = require('discord.js');
+const { getRaid, createRaid } = require('../utils/raidStorage');
 const { buildRaidEmbed, buildRaidButtons } = require('../utils/raidEmbed');
 
 module.exports = {
@@ -23,10 +23,6 @@ module.exports = {
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'schedule') {
-      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
-      }
-
       const guildId = interaction.guildId;
       const name = interaction.options.getString('name');
       const timestamp = interaction.options.getInteger('timestamp');
@@ -44,13 +40,13 @@ module.exports = {
 
       const message = await interaction.channel.send({ embeds: [buildRaidEmbed(raid)], components: buildRaidButtons(raidId) });
       raid.messageId = message.id;
-      createRaid(guildId, loadRaids(guildId), raidId, raid);
+      await createRaid(raid);
       return interaction.reply({ content: '✅ Raid scheduled!', flags: 64 });
     }
 
     if (sub === 'roster') {
       const raidId = interaction.options.getString('raidid');
-      const raid = loadRaids(interaction.guildId).raids[raidId];
+      const raid = await getRaid(raidId);
       if (!raid) return interaction.reply({ content: '❌ No raid found with that ID.', flags: 64 });
       return interaction.reply({ embeds: [buildRaidEmbed(raid)], flags: 64 });
     }

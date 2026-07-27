@@ -13,10 +13,19 @@ CREATE TABLE IF NOT EXISTS guild_config (
   broadcast_channel_id  text
 );
 
--- If the table already exists, add the TrackScape columns
+-- If the table already exists, add columns incrementally
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS trackscape_code      text UNIQUE;
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS clanchat_channel_id  text;
 ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS broadcast_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS poll_channel_id      text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS last_auto_roll_date  text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_role_id      text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_mod_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_channel_id   text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_message_id   text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS role_panel_config    jsonb;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS lootsubmit_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS rsn_channel_id        text;
 
 -- If name_changes doesn't exist yet, the CREATE TABLE IF NOT EXISTS above handles it.
 -- If you added it manually without changed_at, run:
@@ -67,6 +76,27 @@ CREATE TABLE IF NOT EXISTS name_changes (
   changed_at timestamptz DEFAULT now(),
   PRIMARY KEY (guild_id, old_name)
 );
+
+-- Clan achievement broadcasts (level ups, collection log, XP milestones, PBs)
+CREATE TABLE IF NOT EXISTS achievements (
+  id                 uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  guild_id           text NOT NULL,
+  player_name        text NOT NULL,
+  title              text NOT NULL,
+  description        text NOT NULL,
+  discord_message_id text,
+  embed_index        integer NOT NULL DEFAULT 0,
+  recorded_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS achievements_dedup
+  ON achievements (guild_id, discord_message_id, embed_index)
+  WHERE discord_message_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS achievements_guild_time ON achievements (guild_id, recorded_at DESC);
+
+ALTER TABLE achievements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read achievements" ON achievements FOR SELECT USING (true);
 
 -- Active polls — persisted so Railway redeploys don't lose voting state
 -- Run this if the table doesn't exist yet:
@@ -154,12 +184,279 @@ GRANT EXECUTE ON FUNCTION monthly_plank_leaderboard(text) TO anon;
 GRANT EXECUTE ON FUNCTION alltime_plank_leaderboard(text) TO anon;
 
 -- =====================================================================
--- Seed: guild config only.
--- Drop/plank data is populated automatically on bot startup via
--- retroParseGuild(), which scans channel history for the current month.
--- Run /lootboard scrape to import full all-time channel history.
+-- No seed data needed — channel IDs are set via /lootboard setchannel,
+-- /plankboard setchannel, and the admin settings panel on the website.
 -- =====================================================================
 
-INSERT INTO guild_config (guild_id, drops_channel_id, planks_channel_id)
-VALUES ('1507110016342167622', '1514356163569782944', '1513189530264670248')
-ON CONFLICT (guild_id) DO NOTHING;
+-- =====================================================================
+-- Activity tracking (Discord messages, in-game clan chat, voice channel)
+-- =====================================================================
+
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS inactivity_channel_id text;
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS recap_channel_id       text;
+
+CREATE TABLE IF NOT EXISTS discord_activity (
+  guild_id         text NOT NULL,
+  discord_id       text NOT NULL,
+  display_name     text,
+  role_name        text,
+  promotion_note   text,
+  message_count    int  NOT NULL DEFAULT 0,
+  month_count      int  NOT NULL DEFAULT 0,
+  last_message_at  timestamptz,
+  PRIMARY KEY (guild_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS ingame_activity (
+  guild_id        text NOT NULL,
+  rsn             text NOT NULL,
+  message_count   int  NOT NULL DEFAULT 0,
+  month_count     int  NOT NULL DEFAULT 0,
+  last_message_at timestamptz,
+  PRIMARY KEY (guild_id, rsn)
+);
+
+CREATE TABLE IF NOT EXISTS vc_activity (
+  guild_id      text NOT NULL,
+  discord_id    text NOT NULL,
+  display_name  text,
+  role_name     text,
+  total_minutes int  NOT NULL DEFAULT 0,
+  month_minutes int  NOT NULL DEFAULT 0,
+  last_seen_at  timestamptz,
+  PRIMARY KEY (guild_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS rsn_links (
+  discord_id  text NOT NULL,
+  guild_id    text NOT NULL,
+  rsn         text NOT NULL,
+  linked_at   timestamptz DEFAULT now(),
+  primary_rsn boolean NOT NULL DEFAULT true,
+  PRIMARY KEY (discord_id, guild_id, rsn)
+);
+-- Enforce at most one primary RSN per user per guild
+-- CREATE UNIQUE INDEX rsn_links_one_primary ON rsn_links (discord_id, guild_id) WHERE primary_rsn = true;
+
+ALTER TABLE discord_activity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingame_activity  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vc_activity      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rsn_links        ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "public read discord_activity" ON discord_activity FOR SELECT USING (true);
+CREATE POLICY "public read ingame_activity"  ON ingame_activity  FOR SELECT USING (true);
+CREATE POLICY "public read vc_activity"      ON vc_activity      FOR SELECT USING (true);
+CREATE POLICY "public read rsn_links"        ON rsn_links        FOR SELECT USING (true);
+
+-- Atomic increment functions called by the bot
+CREATE OR REPLACE FUNCTION log_discord_message(p_guild text, p_user text, p_name text, p_role text)
+RETURNS void AS $$
+  INSERT INTO discord_activity (guild_id, discord_id, display_name, role_name, message_count, month_count, last_message_at)
+  VALUES (p_guild, p_user, p_name, p_role, 1, 1, now())
+  ON CONFLICT (guild_id, discord_id) DO UPDATE SET
+    display_name    = EXCLUDED.display_name,
+    role_name       = COALESCE(EXCLUDED.role_name, discord_activity.role_name),
+    message_count   = discord_activity.message_count + 1,
+    month_count     = discord_activity.month_count + 1,
+    last_message_at = now();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION log_ingame_message(p_guild text, p_rsn text)
+RETURNS void AS $$
+  INSERT INTO ingame_activity (guild_id, rsn, message_count, month_count, last_message_at)
+  VALUES (p_guild, p_rsn, 1, 1, now())
+  ON CONFLICT (guild_id, rsn) DO UPDATE SET
+    message_count   = ingame_activity.message_count + 1,
+    month_count     = ingame_activity.month_count + 1,
+    last_message_at = now()
+  WHERE ingame_activity.last_message_at < now() - interval '2 seconds';
+$$ LANGUAGE sql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION log_vc_time(p_guild text, p_user text, p_name text, p_role text, p_minutes int)
+RETURNS void AS $$
+  INSERT INTO vc_activity (guild_id, discord_id, display_name, role_name, total_minutes, month_minutes, last_seen_at)
+  VALUES (p_guild, p_user, p_name, p_role, p_minutes, p_minutes, now())
+  ON CONFLICT (guild_id, discord_id) DO UPDATE SET
+    display_name  = EXCLUDED.display_name,
+    role_name     = COALESCE(EXCLUDED.role_name, vc_activity.role_name),
+    total_minutes = vc_activity.total_minutes + p_minutes,
+    month_minutes = vc_activity.month_minutes + p_minutes,
+    last_seen_at  = now();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- =====================================================================
+-- Clan events + RSVPs
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS clan_events (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id              text NOT NULL,
+  title                 text NOT NULL,
+  description           text,
+  event_type            text NOT NULL DEFAULT 'Event',
+  scheduled_at          timestamptz,
+  channel_id            text,
+  message_id            text,
+  created_by_discord_id text,
+  created_at            timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS event_rsvps (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id     uuid REFERENCES clan_events(id) ON DELETE CASCADE,
+  discord_id   text NOT NULL,
+  display_name text,
+  response     text NOT NULL DEFAULT 'going',
+  rsvped_at    timestamptz DEFAULT now(),
+  UNIQUE (event_id, discord_id)
+);
+
+ALTER TABLE clan_events  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_rsvps  ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "public read clan_events"  ON clan_events  FOR SELECT USING (true);
+CREATE POLICY "public read event_rsvps"  ON event_rsvps  FOR SELECT USING (true);
+
+-- =====================================================================
+-- Raids
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS raids (
+  id           text PRIMARY KEY,
+  guild_id     text NOT NULL,
+  name         text NOT NULL,
+  timestamp    bigint NOT NULL,
+  description  text,
+  channel_id   text,
+  message_id   text,
+  signups      jsonb NOT NULL DEFAULT '[]',
+  attendees    jsonb,
+  reminded_24h bool NOT NULL DEFAULT false,
+  reminded_1h  bool NOT NULL DEFAULT false,
+  created_at   timestamptz DEFAULT now()
+);
+
+ALTER TABLE raids ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read raids" ON raids FOR SELECT USING (true);
+
+-- =====================================================================
+-- Command Logs
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS command_logs (
+  id           bigserial PRIMARY KEY,
+  guild_id     text NOT NULL,
+  discord_id   text NOT NULL,
+  display_name text,
+  command      text NOT NULL,
+  subcommand   text,
+  channel_id   text,
+  logged_at    timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS command_logs_guild_idx ON command_logs (guild_id, logged_at DESC);
+ALTER TABLE command_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read command_logs" ON command_logs FOR SELECT USING (true);
+-- Enable realtime: Supabase dashboard → Database → Replication → command_logs ON
+-- Or run: ALTER PUBLICATION supabase_realtime ADD TABLE command_logs;
+
+-- =====================================================================
+-- Bingo system
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS bingo_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id    text NOT NULL,
+  title       text NOT NULL,
+  board_size  int  NOT NULL DEFAULT 5,
+  active      bool NOT NULL DEFAULT false,
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bingo_tasks (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id       uuid REFERENCES bingo_events(id) ON DELETE CASCADE,
+  position       int  NOT NULL,
+  title          text NOT NULL,
+  description    text,
+  image_url      text,
+  points         int  NOT NULL DEFAULT 1,
+  required_count int  NOT NULL DEFAULT 1,
+  points_per_submission int,
+  UNIQUE(event_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS bingo_teams (
+  id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid REFERENCES bingo_events(id) ON DELETE CASCADE,
+  name     text NOT NULL,
+  color    text NOT NULL DEFAULT '#c89b3c'
+);
+
+CREATE TABLE IF NOT EXISTS bingo_team_members (
+  id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id uuid REFERENCES bingo_teams(id) ON DELETE CASCADE,
+  rsn     text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bingo_submissions (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id        uuid REFERENCES bingo_events(id) ON DELETE CASCADE,
+  task_id         uuid REFERENCES bingo_tasks(id) ON DELETE CASCADE,
+  rsn             text NOT NULL,
+  screenshot_url  text,
+  screenshot_path text,
+  notes           text,
+  status          text NOT NULL DEFAULT 'pending',
+  submitted_at    timestamptz DEFAULT now(),
+  reviewed_at     timestamptz,
+  reviewed_by     text
+);
+
+ALTER TABLE bingo_events      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_tasks       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_teams       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_team_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bingo_submissions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "public read bingo_events"       ON bingo_events       FOR SELECT USING (true);
+CREATE POLICY "public read bingo_tasks"        ON bingo_tasks        FOR SELECT USING (true);
+CREATE POLICY "public read bingo_teams"        ON bingo_teams        FOR SELECT USING (true);
+CREATE POLICY "public read bingo_team_members" ON bingo_team_members FOR SELECT USING (true);
+CREATE POLICY "public read bingo_submissions"  ON bingo_submissions  FOR SELECT USING (true);
+
+-- =====================================================================
+-- Raid Guides (imported from Discord forum threads)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS raid_guides (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id         text NOT NULL,
+  title            text NOT NULL,
+  content          text NOT NULL DEFAULT '',
+  thread_id        text,
+  forum_channel_id text,
+  created_at       timestamptz DEFAULT now(),
+  updated_at       timestamptz DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS raid_guides_thread_dedup
+  ON raid_guides (guild_id, thread_id)
+  WHERE thread_id IS NOT NULL;
+
+ALTER TABLE raid_guides ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read raid_guides" ON raid_guides FOR SELECT USING (true);
+
+-- =====================================================================
+-- Competition start announcements (public "X of the Week has begun!" post)
+-- Dedup guard so a restart near a competition's startsAt doesn't double-post.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS comp_start_announcements (
+  guild_id       text NOT NULL,
+  competition_id integer NOT NULL,
+  announced_at   timestamptz DEFAULT now(),
+  PRIMARY KEY (guild_id, competition_id)
+);
+
+ALTER TABLE comp_start_announcements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read comp_start_announcements" ON comp_start_announcements FOR SELECT USING (true);

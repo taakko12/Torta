@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { loadData, saveData, getBoard } = require('../utils/storage');
+const { loadData, saveData, getBoard, setPollChannelId } = require('../utils/storage');
 const { refreshLeaderboardMessage } = require('../utils/updateLeaderboard');
 const { buildLeaderboardEmbed } = require('../utils/leaderboardEmbed');
 const { MEDALS } = require('../utils/constants');
@@ -7,7 +7,7 @@ const {
   BOTW_DISPLAY, SOTW_DISPLAY, HISTORY_SIZE, getBossPartners,
   nextCompWindow, rollCandidates, buildPollEmbed, buildPollComponents,
 } = require('../utils/pollHelpers');
-const { createPoll } = require('../utils/pollStorage');
+const { createPoll, getRecentPicks, getRecentPicksWithDates, insertPick, deleteMostRecentPick } = require('../utils/pollStorage');
 const { getCurrentBossCompetitions, getCurrentSkillCompetition, getCompetitionStandings } = require('../utils/wom');
 const { buildCompetitionEmbed, humanize, formatNumber } = require('../utils/womEmbeds');
 
@@ -16,16 +16,16 @@ const SOTW = { key: 'sotw', label: 'Skill of the Week', emoji: '📈', color: 0x
 
 // ── Shared win-board handlers ─────────────────────────────────────────────────
 
-function execWins(interaction, cfg) {
+async function execWins(interaction, cfg) {
   const user = interaction.options.getUser('user') ?? interaction.user;
-  const board = getBoard(loadData(interaction.guildId), cfg.key);
+  const board = getBoard(await loadData(interaction.guildId), cfg.key);
   const wins = board.users[user.id]?.wins ?? 0;
   return interaction.reply(`${cfg.emoji} <@${user.id}> has **${wins}** ${cfg.label} win${wins === 1 ? '' : 's'}.`);
 }
 
 async function execLeaderboard(interaction, cfg) {
   const guildId = interaction.guildId;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   const embed = buildLeaderboardEmbed(board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   const message = await interaction.channel.send({ embeds: [embed] });
@@ -34,15 +34,15 @@ async function execLeaderboard(interaction, cfg) {
   return interaction.reply({ content: `📌 ${cfg.label} leaderboard posted! It will auto-update whenever wins change.`, flags: 64 });
 }
 
-function execAdd(interaction, cfg) {
+async function execAdd(interaction, cfg) {
   const guildId = interaction.guildId;
   const user = interaction.options.getUser('user');
   const amount = interaction.options.getInteger('amount') ?? 1;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
   board.users[user.id].wins += amount;
-  saveData(guildId, data);
+  await saveData(guildId, data);
   refreshLeaderboardMessage(interaction.client, board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   return interaction.reply({
     content: `✅ Added **${amount}** ${cfg.label} win${amount === 1 ? '' : 's'} to <@${user.id}>. They now have **${board.users[user.id].wins}** total.`,
@@ -50,15 +50,15 @@ function execAdd(interaction, cfg) {
   });
 }
 
-function execRemove(interaction, cfg) {
+async function execRemove(interaction, cfg) {
   const guildId = interaction.guildId;
   const user = interaction.options.getUser('user');
   const amount = interaction.options.getInteger('amount') ?? 1;
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
   board.users[user.id].wins = Math.max(0, board.users[user.id].wins - amount);
-  saveData(guildId, data);
+  await saveData(guildId, data);
   refreshLeaderboardMessage(interaction.client, board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   return interaction.reply({
     content: `✅ Removed **${amount}** ${cfg.label} win${amount === 1 ? '' : 's'} from <@${user.id}>. They now have **${board.users[user.id].wins}** total.`,
@@ -66,15 +66,15 @@ function execRemove(interaction, cfg) {
   });
 }
 
-function execSet(interaction, cfg) {
+async function execSet(interaction, cfg) {
   const guildId = interaction.guildId;
   const user = interaction.options.getUser('user');
   const amount = interaction.options.getInteger('amount');
-  const data = loadData(guildId);
+  const data = await loadData(guildId);
   const board = getBoard(data, cfg.key);
   if (!board.users[user.id]) board.users[user.id] = { wins: 0 };
   board.users[user.id].wins = amount;
-  saveData(guildId, data);
+  await saveData(guildId, data);
   refreshLeaderboardMessage(interaction.client, board, { title: `${cfg.emoji} ${cfg.label} Leaderboard`, color: cfg.color });
   return interaction.reply({ content: `✅ Set <@${user.id}>'s ${cfg.label} wins to **${amount}**.`, flags: 64 });
 }
@@ -136,8 +136,7 @@ async function execBotwStats(interaction) {
 
 async function execBotwRoll(interaction) {
   const guildId = interaction.guildId;
-  const data = loadData(guildId);
-  const history = data.botwHistory ?? [];
+  const history = await getRecentPicks(guildId, 'botw');
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);
   const endsUnix = Math.floor(endsAt.getTime() / 1000);
@@ -196,8 +195,7 @@ async function execSotwStats(interaction) {
 
 async function execSotwRoll(interaction) {
   const guildId = interaction.guildId;
-  const data = loadData(guildId);
-  const history = data.sotwHistory ?? [];
+  const history = await getRecentPicks(guildId, 'sotw');
   const { startsAt, endsAt } = nextCompWindow();
   const startsUnix = Math.floor(startsAt.getTime() / 1000);
   const endsUnix = Math.floor(endsAt.getTime() / 1000);
@@ -224,6 +222,39 @@ async function execSotwRoll(interaction) {
   await createPoll(poll);
 }
 
+// ── Standalone channel roll (used by auto-scheduler in index.js) ──────────────
+
+async function rollPollToChannel(type, guildId, channel, data) {
+  const history = await getRecentPicks(guildId, type);
+  const { startsAt, endsAt } = nextCompWindow();
+  const startsUnix = Math.floor(startsAt.getTime() / 1000);
+  const endsUnix = Math.floor(endsAt.getTime() / 1000);
+  const votingCutoff = new Date(startsAt.getTime() - 10 * 60 * 1000);
+  const cutoffUnix = Math.floor(votingCutoff.getTime() / 1000);
+  const candidates = rollCandidates(type, history, []);
+  const displayMap = type === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+  const poll = {
+    guild_id: guildId,
+    channel_id: channel.id,
+    poll_type: type,
+    candidates,
+    session_rejected: type === 'botw'
+      ? candidates.flatMap(c => [c, ...getBossPartners(c)])
+      : [...candidates],
+    user_votes: {},
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    voting_cutoff: votingCutoff.toISOString(),
+    cutoff_unix: cutoffUnix,
+    window_str: `<t:${startsUnix}:f> → <t:${endsUnix}:f>`,
+    recent_names: history.slice(-HISTORY_SIZE).map(n => displayMap[n] ?? n),
+    pre_roll_history: history,
+  };
+  const msg = await channel.send({ embeds: [buildPollEmbed(poll)], components: buildPollComponents(poll) });
+  poll.message_id = msg.id;
+  await createPoll(poll);
+}
+
 // ── Command definition ────────────────────────────────────────────────────────
 
 function addGroupSubcommands(group) {
@@ -247,6 +278,11 @@ function addGroupSubcommands(group) {
       .setDescription('Roll 3 options for a community vote poll — admin only')
     )
     .addSubcommand(sub => sub
+      .setName('setpollchannel')
+      .setDescription('Set the channel for auto-scheduled Saturday polls — admin only')
+      .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post polls in').setRequired(true))
+    )
+    .addSubcommand(sub => sub
       .setName('add')
       .setDescription('Add win(s) to a member — admin only')
       .addUserOption(opt => opt.setName('user').setDescription('Member to award').setRequired(true))
@@ -263,10 +299,24 @@ function addGroupSubcommands(group) {
       .setDescription("Set a member's win count directly — admin only")
       .addUserOption(opt => opt.setName('user').setDescription('Member to set').setRequired(true))
       .addIntegerOption(opt => opt.setName('amount').setDescription('Exact win count').setMinValue(0).setRequired(true))
+    )
+    .addSubcommand(sub => sub
+      .setName('history')
+      .setDescription('Show recent picks for this competition type')
+    )
+    .addSubcommand(sub => sub
+      .setName('addpick')
+      .setDescription('Manually add a metric to pick history — admin only')
+      .addStringOption(opt => opt.setName('metric').setDescription('Metric key (e.g. fishing, zulrah)').setRequired(true))
+    )
+    .addSubcommand(sub => sub
+      .setName('deletepick')
+      .setDescription('Remove the most recent occurrence of a metric from pick history — admin only')
+      .addStringOption(opt => opt.setName('metric').setDescription('Metric key (e.g. fishing, zulrah)').setRequired(true))
     );
 }
 
-const ADMIN_SUBS = new Set(['leaderboard', 'roll', 'add', 'remove', 'set']);
+const ADMIN_SUBS = new Set(['leaderboard', 'roll', 'setpollchannel', 'add', 'remove', 'set', 'addpick', 'deletepick']);
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -284,11 +334,53 @@ module.exports = {
       return interaction.reply({ content: '❌ You need Manage Server permission.', flags: 64 });
     }
 
+    if (sub === 'setpollchannel') {
+      const channel = interaction.options.getChannel('channel');
+      await setPollChannelId(interaction.guildId, channel.id);
+      return interaction.reply({ content: `✅ Poll channel set to <#${channel.id}>. BOTW and SOTW polls will auto-post there every Saturday at 12:00 UTC.`, flags: 64 });
+    }
+
     if (sub === 'wins') return execWins(interaction, cfg);
     if (sub === 'leaderboard') return execLeaderboard(interaction, cfg);
     if (sub === 'add') return execAdd(interaction, cfg);
     if (sub === 'remove') return execRemove(interaction, cfg);
     if (sub === 'set') return execSet(interaction, cfg);
+
+    if (sub === 'history') {
+      const picks = await getRecentPicksWithDates(interaction.guildId, cfg.key, 10);
+      const displayMap = cfg.key === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+      const lines = picks.length
+        ? picks.map((p, i) => `${picks.length - i}. **${displayMap[p.metric] ?? p.metric}** — <t:${Math.floor(new Date(p.picked_at).getTime() / 1000)}:d>`).reverse().join('\n')
+        : 'No picks recorded yet.';
+      const excluded = picks.slice(0, HISTORY_SIZE).map(p => displayMap[p.metric] ?? p.metric);
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle(`${cfg.emoji} ${cfg.label} — Recent Picks`)
+          .setColor(cfg.color)
+          .setDescription(lines)
+          .addFields({ name: 'Currently excluded from next roll', value: excluded.length ? excluded.join(', ') : 'None' })],
+        flags: 64,
+      });
+    }
+
+    if (sub === 'addpick') {
+      const metric = interaction.options.getString('metric').toLowerCase().trim();
+      await insertPick(interaction.guildId, cfg.key, metric);
+      const displayMap = cfg.key === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+      return interaction.reply({ content: `✅ Added **${displayMap[metric] ?? metric}** to ${cfg.label} pick history.`, flags: 64 });
+    }
+
+    if (sub === 'deletepick') {
+      const metric = interaction.options.getString('metric').toLowerCase().trim();
+      const deleted = await deleteMostRecentPick(interaction.guildId, cfg.key, metric);
+      const displayMap = cfg.key === 'botw' ? BOTW_DISPLAY : SOTW_DISPLAY;
+      return interaction.reply({
+        content: deleted
+          ? `✅ Removed most recent **${displayMap[metric] ?? metric}** from ${cfg.label} history.`
+          : `❌ No pick found for \`${metric}\` in ${cfg.label} history.`,
+        flags: 64,
+      });
+    }
 
     if (group === 'botw') {
       if (sub === 'stats') return execBotwStats(interaction);
@@ -298,4 +390,6 @@ module.exports = {
       if (sub === 'roll') return execSotwRoll(interaction);
     }
   },
+
+  rollPollToChannel,
 };

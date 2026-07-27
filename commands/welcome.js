@@ -64,12 +64,17 @@ module.exports = {
       .setDescription('Set the channel where mod approval requests are sent')
       .addChannelOption(opt => opt.setName('channel').setDescription('Mod review channel').setRequired(true))
     )
+    .addSubcommand(sub => sub
+      .setName('setrsnchannel')
+      .setDescription('Set the channel where members can type their RSN to update their nickname')
+      .addChannelOption(opt => opt.setName('channel').setDescription('RSN update channel').setRequired(true))
+    )
     .setDefaultMemberPermissions(0n),
 
   async execute(interaction) {
     const guildId = interaction.guildId;
     const sub = interaction.options.getSubcommand();
-    const data = loadWelcome(guildId);
+    const data = await loadWelcome(guildId);
 
     if (sub === 'post') {
       if (data.channelId && data.messageId) {
@@ -89,20 +94,26 @@ module.exports = {
 
       data.channelId = interaction.channel.id;
       data.messageId = message.id;
-      saveWelcome(guildId, data);
+      await saveWelcome(guildId, data);
       await interaction.reply({ content: '✅ Rules panel posted!', flags: 64 });
 
     } else if (sub === 'setrole') {
       const role = interaction.options.getRole('role');
       data.roleId = role.id;
-      saveWelcome(guildId, data);
+      await saveWelcome(guildId, data);
       await interaction.reply({ content: `✅ Members will receive <@&${role.id}> when approved by a mod.`, flags: 64 });
 
     } else if (sub === 'setmodchannel') {
       const channel = interaction.options.getChannel('channel');
       data.modChannelId = channel.id;
-      saveWelcome(guildId, data);
+      await saveWelcome(guildId, data);
       await interaction.reply({ content: `✅ TOS approval requests will be sent to ${channel}.`, flags: 64 });
+
+    } else if (sub === 'setrsnchannel') {
+      const channel = interaction.options.getChannel('channel');
+      data.rsnChannelId = channel.id;
+      await saveWelcome(guildId, data);
+      await interaction.reply({ content: `✅ Members can now type their RSN in ${channel} to update their nickname.`, flags: 64 });
     }
   }
 };

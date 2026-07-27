@@ -1,38 +1,52 @@
-const fs = require('fs');
-const path = require('path');
+const supabase = require('./supabase');
 
-function dataPath(guildId) {
-  return path.join(__dirname, '..', 'data', guildId, 'raids.json');
+async function getRaid(raidId) {
+  const { data } = await supabase.from('raids').select('*').eq('id', raidId).maybeSingle();
+  if (!data) return null;
+  return toCamel(data);
 }
 
-function loadRaids(guildId) {
-  const p = dataPath(guildId);
-  if (!fs.existsSync(p)) {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify({ raids: {} }, null, 2));
-    return { raids: {} };
-  }
-  return JSON.parse(fs.readFileSync(p, 'utf-8'));
+async function createRaid(raid) {
+  const { error } = await supabase.from('raids').insert({
+    id: raid.id,
+    guild_id: raid.guildId,
+    name: raid.name,
+    timestamp: raid.timestamp,
+    description: raid.description ?? null,
+    channel_id: raid.channelId ?? null,
+    message_id: raid.messageId ?? null,
+    signups: raid.signups ?? [],
+    attendees: raid.attendees ?? null,
+    reminded_24h: false,
+    reminded_1h: false,
+  });
+  if (error) throw error;
 }
 
-function saveRaids(guildId, data) {
-  const p = dataPath(guildId);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(data, null, 2));
+async function updateRaid(raidId, patch) {
+  const row = {};
+  if ('signups' in patch) row.signups = patch.signups;
+  if ('attendees' in patch) row.attendees = patch.attendees;
+  if ('reminded24h' in patch) row.reminded_24h = patch.reminded24h;
+  if ('reminded1h' in patch) row.reminded_1h = patch.reminded1h;
+  if ('messageId' in patch) row.message_id = patch.messageId;
+  await supabase.from('raids').update(row).eq('id', raidId);
 }
 
-function getRaid(data, raidId) {
-  return data.raids[raidId] ?? null;
+async function getUpcomingRaids() {
+  const now = Math.floor(Date.now() / 1000);
+  const { data } = await supabase.from('raids')
+    .select('*').gt('timestamp', now).is('attendees', null);
+  return (data ?? []).map(toCamel);
 }
 
-function createRaid(guildId, data, raidId, raid) {
-  data.raids[raidId] = raid;
-  saveRaids(guildId, data);
+function toCamel(r) {
+  return {
+    id: r.id, guildId: r.guild_id, name: r.name, timestamp: r.timestamp,
+    description: r.description, channelId: r.channel_id, messageId: r.message_id,
+    signups: r.signups ?? [], attendees: r.attendees ?? null,
+    reminded24h: r.reminded_24h, reminded1h: r.reminded_1h,
+  };
 }
 
-function updateRaid(guildId, data, raidId, patch) {
-  Object.assign(data.raids[raidId], patch);
-  saveRaids(guildId, data);
-}
-
-module.exports = { loadRaids, saveRaids, getRaid, createRaid, updateRaid };
+module.exports = { getRaid, createRaid, updateRaid, getUpcomingRaids };

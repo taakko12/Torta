@@ -6,6 +6,8 @@ const { findGuildByCode } = require('./trackscapeStorage');
 const { extractBroadcast, stripTags } = require('./broadcastExtractor');
 const { recordDrop } = require('./dropStorage');
 const { recordDeath } = require('./plankStorage');
+const { recordDeposit, updateLeaderboardEmbed } = require('./cofferStorage');
+const { logIngameMessage } = require('./activityStorage');
 
 // verificationCode → Set<WebSocket>
 const rooms = new Map();
@@ -95,9 +97,86 @@ function buildBroadcastEmbed(broadcast) {
   }
 }
 
-function startTrackscapeServer(discordClient, port = 3000) {
+const supabase = require('./supabase');
+
+const FEEDBACK_COLORS = { Events: 0x5865F2, Discord: 0x57F287, Bot: 0xFEE75C, Website: 0xEB459E };
+
+// 60-second cache so we don't hit Supabase on every clan chat message
+const chatEnabledCache = new Map();
+async function isChatTrackingEnabled(guildId) {
+  const c = chatEnabledCache.get(guildId);
+  if (c && Date.now() < c.expires) return c.value;
+  const { data } = await supabase.from('guild_config').select('clanchat_tracking_enabled').eq('guild_id', guildId).maybeSingle();
+  const value = !!data?.clanchat_tracking_enabled;
+  chatEnabledCache.set(guildId, { value, expires: Date.now() + 60_000 });
+  return value;
+}
+
+function startTrackscapeServer(discordClient, port = 3000, { onWomCheck } = {}) {
   const app = express();
   app.use(express.json());
+
+  app.post('/api/admin/wom-check', async (req, res) => {
+    const secret = process.env.BOT_ADMIN_SECRET;
+    if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
+    res.send('OK');
+    if (onWomCheck) onWomCheck().catch(e => console.error(`[wom-check] ${e.message}`));
+  });
+
+  app.post('/api/loot-review-notify', async (req, res) => {
+    const secret = process.env.BOT_ADMIN_SECRET;
+    if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
+    const { guildId, label, reason } = req.body;
+    res.send('OK');
+    try {
+      const { data: config } = await supabase
+        .from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).single();
+      const channelId = config?.inactivity_channel_id;
+      if (!channelId) return;
+      const channel = await discordClient.channels.fetch(channelId);
+      if (!channel) return;
+      const embed = new EmbedBuilder()
+        .setTitle('🚩 Drop Flagged for Review')
+        .setURL('https://tortapounders.vercel.app/admin/loot')
+        .setColor(0xFEE75C)
+        .addFields(
+          { name: 'Drop', value: label },
+          { name: 'Reason', value: reason },
+        )
+        .setFooter({ text: 'Click the title to open the admin loot panel' })
+        .setTimestamp();
+      await channel.send({ embeds: [embed] });
+    } catch (err) {
+      console.error(`[loot-review-notify] ${err.message}`);
+    }
+  });
+
+  app.post('/api/feedback-notify', async (req, res) => {
+    const secret = process.env.BOT_ADMIN_SECRET;
+    if (!secret || req.headers['x-admin-secret'] !== secret) return res.status(401).send('Unauthorized');
+    const { guildId, category, message } = req.body;
+    res.send('OK');
+    try {
+      const { data: config } = await supabase
+        .from('guild_config').select('inactivity_channel_id').eq('guild_id', guildId).single();
+      const channelId = config?.inactivity_channel_id;
+      if (!channelId) return;
+      const channel = await discordClient.channels.fetch(channelId);
+      if (!channel) return;
+      const embed = new EmbedBuilder()
+        .setTitle('📬 New Feedback')
+        .setColor(FEEDBACK_COLORS[category] ?? 0x7c5ce8)
+        .addFields(
+          { name: 'Category', value: category, inline: true },
+          { name: 'Message', value: message },
+        )
+        .setFooter({ text: 'View all → https://tortapounders.vercel.app/admin/feedback' })
+        .setTimestamp();
+      await channel.send({ embeds: [embed] });
+    } catch (err) {
+      console.error(`[feedback-notify] ${err.message}`);
+    }
+  });
 
   app.post('/api/chat/new-clan-chat', async (req, res) => {
     const code = req.headers['verification-code'];
@@ -121,14 +200,18 @@ function startTrackscapeServer(discordClient, port = 3000) {
       const isLeague = msg.icon_id === 22;
 
       if (isBroadcast) {
-        if (!guild.broadcastChannelId) continue;
         const broadcast = extractBroadcast(cleanMsg);
         if (!broadcast) continue;
         const embed = buildBroadcastEmbed(broadcast);
         if (!embed) continue;
         if (isLeague) embed.setFooter({ text: 'Leagues' });
+        // Route coffer to its own channel if configured, else fall back to broadcast channel
+        const targetChannelId = broadcast.type === 'Coffer' && guild.cofferChannelId
+          ? guild.cofferChannelId
+          : guild.broadcastChannelId;
+        if (!targetChannelId) continue;
         try {
-          const channel = await discordClient.channels.fetch(guild.broadcastChannelId);
+          const channel = await discordClient.channels.fetch(targetChannelId);
           if (channel) {
             const sentMsg = await channel.send({ embeds: [embed] });
             if ((broadcast.type === 'RaidDrop' || broadcast.type === 'ItemDrop') && broadcast.value > 0) {
@@ -137,12 +220,18 @@ function startTrackscapeServer(discordClient, port = 3000) {
             if (broadcast.type === 'PK' && !broadcast.won) {
               await recordDeath(guild.guildId, broadcast.player, sentMsg.id, null);
             }
+            if (broadcast.type === 'Coffer' && broadcast.gp > 0) {
+              await recordDeposit(guild.guildId, broadcast.player, broadcast.gp, broadcast.action);
+              updateLeaderboardEmbed(discordClient, guild.guildId).catch(() => {});
+            }
           }
         } catch (err) {
           console.error(`[trackscape] Broadcast send failed for guild ${guild.guildId}: ${err.message}`);
         }
       } else {
+        if (!await isChatTrackingEnabled(guild.guildId)) continue;
         if (!guild.clanChatChannelId) continue;
+        logIngameMessage(guild.guildId, sender).catch(() => {});
         const embed = new EmbedBuilder()
           .setAuthor({ name: `${isLeague ? '[Leagues] ' : ''}${sender} (${rank || 'Member'})` })
           .setDescription(cleanMsg)
@@ -191,4 +280,4 @@ function sendToGame(code, sender, message) {
   }
 }
 
-module.exports = { startTrackscapeServer, sendToGame };
+module.exports = { startTrackscapeServer, sendToGame, isChatTrackingEnabled };

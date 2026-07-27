@@ -10,7 +10,7 @@ const supabase = require('../utils/supabase');
 const { loadTrackscape } = require('../utils/trackscapeStorage');
 const { currentMonth } = require('../utils/plankStorage');
 const { MEDALS } = require('../utils/constants');
-const { isLootEmbed, dateToSnowflake } = require('../utils/messageHelper');
+const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, fetchAllMessages } = require('../utils/messageHelper');
 
 function formatGp(value) {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B gp`;
@@ -19,8 +19,10 @@ function formatGp(value) {
   return `${value} gp`;
 }
 
+const SITE = process.env.WEBSITE_URL || 'https://tortapounders.vercel.app';
+
 function buildLeaderboardEmbed(entries, title, color) {
-  const embed = new EmbedBuilder().setTitle(title).setColor(color).setTimestamp();
+  const embed = new EmbedBuilder().setTitle(title).setURL(`${SITE}/feed?section=loot`).setColor(color).setTimestamp();
   if (entries.length === 0) {
     embed.setDescription('No loot recorded yet.');
   } else {
@@ -34,56 +36,7 @@ function buildLeaderboardEmbed(entries, title, color) {
   return embed;
 }
 
-async function fetchAllMessages(channel, afterSnowflake = null) {
-  const all = [];
-  if (afterSnowflake) {
-    let lastId = afterSnowflake;
-    while (true) {
-      const batch = await channel.messages.fetch({ limit: 100, after: lastId });
-      if (batch.size === 0) break;
-      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-      all.push(...msgs);
-      lastId = msgs[msgs.length - 1].id;
-      if (batch.size < 100) break;
-    }
-  } else {
-    let lastId = null;
-    while (true) {
-      const options = { limit: 100 };
-      if (lastId) options.before = lastId;
-      const batch = await channel.messages.fetch(options);
-      if (batch.size === 0) break;
-      const msgs = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-      all.push(...msgs);
-      lastId = batch.sort((a, b) => a.createdTimestamp - b.createdTimestamp).first().id;
-      if (batch.size < 100) break;
-    }
-  }
-  return all;
-}
 
-function parseBroadcastDropEmbed(embed) {
-  const title = embed.title ?? '';
-  const desc = embed.description ?? '';
-  const parseVal = s => s ? parseInt(s.replace(/[,\s]/g, ''), 10) || null : null;
-
-  if (title.includes('Raid Drop')) {
-    const m = desc.match(/^\*\*(.+?)\*\* received \*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
-    if (!m) return null;
-    return { player: m[1], item: m[2], value: parseVal(m[3]) };
-  }
-  if (title === '💰 Drop') {
-    const m = desc.match(/^\*\*(.+?)\*\* received a drop: (?:\d+x )?\*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
-    if (!m) return null;
-    return { player: m[1], item: m[2], value: parseVal(m[3]) };
-  }
-  if (title.includes('Clue Item')) {
-    const m = desc.match(/^\*\*(.+?)\*\* received a clue item: \*\*(.+?)\*\*(?:\s*\(([,\d]+) coins\))?/);
-    if (!m) return null;
-    return { player: m[1], item: m[2], value: parseVal(m[3]) };
-  }
-  return null;
-}
 
 module.exports = {
   data: new SlashCommandBuilder()

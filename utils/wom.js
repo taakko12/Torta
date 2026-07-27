@@ -83,6 +83,12 @@ async function getGroupGained(metric, period = 'week', limit = 3) {
   return womGet(`/groups/${groupId}/gained`, { metric, period, limit });
 }
 
+async function getGroupMembers() {
+  const groupId = requireGroupId();
+  const group = await womGet(`/groups/${groupId}`);
+  return group.memberships ?? [];
+}
+
 module.exports = {
   SKILL_METRICS,
   BOSS_METRICS,
@@ -92,5 +98,6 @@ module.exports = {
   getCurrentBossCompetition,
   getCurrentBossCompetitions,
   getCompetitionStandings,
-  getGroupGained
+  getGroupGained,
+  getGroupMembers,
 };
