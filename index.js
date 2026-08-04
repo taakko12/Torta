@@ -13,7 +13,7 @@ const { loadTrackscape } = require('./utils/trackscapeStorage');
 const { loadLoot, resolvePending } = require('./utils/lootStorage');
 const { getPollByMessageId, updatePoll, getExpiredPolls } = require('./utils/pollStorage');
 const { buildPollEmbed, buildPollComponents, lockInPoll, rollCandidates, getBossPartners } = require('./utils/pollHelpers');
-const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed } = require('./utils/messageHelper');
+const { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed, parseBroadcastInviteEmbed } = require('./utils/messageHelper');
 const { loadAnnounce, clearAnnounce } = require('./utils/announceStorage');
 const { logDiscordMessage, logDiscordMessageAlltime, logIngameMessage, logVcTime } = require('./utils/activityStorage');
 
@@ -412,13 +412,29 @@ client.on('interactionCreate', async interaction => {
           if (entry.rsn) await member.setNickname(entry.rsn).catch(() => {});
           console.log(`[welcome] Approved ${member.user.tag} (RSN: ${entry.rsn ?? 'none'}) by ${interaction.user.tag}`);
           logBotEvent(guildId, 'welcome', 'approve', `${entry.rsn ?? '?'} (<@${entry.userId}>)`, interaction.user.id, interaction.user.username);
-          if (entry.referrer) {
-            supabase.from('recruitments').insert({
-              guild_id: guildId,
-              recruiter_rsn: entry.referrer.toLowerCase(),
-              recruit_discord_id: entry.userId,
-              recruit_rsn: entry.rsn?.toLowerCase() ?? '',
-            }).then(() => {}, () => {});
+          if (entry.rsn) {
+            const rsnLower = entry.rsn.toLowerCase();
+            supabase.from('recruitments')
+              .select('id')
+              .eq('guild_id', guildId)
+              .eq('recruit_rsn', rsnLower)
+              .eq('source', 'broadcast')
+              .is('recruit_discord_id', null)
+              .order('recorded_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+              .then(({ data: match }) => {
+                if (match) {
+                  supabase.from('recruitments').update({ recruit_discord_id: entry.userId }).eq('id', match.id).then(() => {}, () => {});
+                } else if (entry.referrer) {
+                  supabase.from('recruitments').insert({
+                    guild_id: guildId,
+                    recruiter_rsn: entry.referrer.toLowerCase(),
+                    recruit_discord_id: entry.userId,
+                    recruit_rsn: rsnLower,
+                  }).then(() => {}, () => {});
+                }
+              }, () => {});
           }
         } catch (err) {
           console.error(`[welcome] Failed to grant role to ${entry.userId}: ${err.message}`);
@@ -789,13 +805,27 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: `✅ RSN set to **${rsn}**! Awaiting mod approval.`, flags: 64 });
     }
 
+    // Cross-reference against an in-game invite broadcast recorded before this member joined Discord
+    const { data: broadcastMatch } = await supabase.from('recruitments')
+      .select('id, recruiter_rsn')
+      .eq('guild_id', guildId)
+      .eq('recruit_rsn', rsn.toLowerCase())
+      .eq('source', 'broadcast')
+      .is('recruit_discord_id', null)
+      .order('recorded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const mismatch = broadcastMatch && referrer && referrer.toLowerCase() !== broadcastMatch.recruiter_rsn;
+
     const embed = new EmbedBuilder()
       .setTitle('📋 New Member Application')
       .setColor(0xf1c40f)
       .addFields(
         { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
         { name: 'RSN', value: rsn, inline: true },
-        ...(referrer ? [{ name: 'Recruited by', value: referrer, inline: true }] : []),
+        ...(broadcastMatch && !mismatch ? [{ name: '✅ Recruited by (confirmed via broadcast)', value: broadcastMatch.recruiter_rsn, inline: true }] : []),
+        ...(mismatch ? [{ name: '⚠️ Recruiter mismatch', value: `Self-reported: **${referrer}**\nBroadcast recorded: **${broadcastMatch.recruiter_rsn}**`, inline: false }] : []),
+        ...(!broadcastMatch && referrer ? [{ name: 'Recruited by', value: referrer, inline: true }] : []),
         { name: 'Applied', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
       )
       .setThumbnail(interaction.user.displayAvatarURL());
@@ -963,6 +993,20 @@ client.on('messageCreate', async message => {
         if (achievement) {
           await recordAchievement(guildId, achievement.player, achievement.title, achievement.description, message.id, i);
           console.log(`[broadcast] Achievement "${achievement.title}" for "${achievement.player}" in guild ${guildId}`);
+          continue;
+        }
+        const invite = parseBroadcastInviteEmbed(embed);
+        if (invite) {
+          const { error } = await supabase.from('recruitments').insert({
+            guild_id: guildId,
+            recruiter_rsn: invite.invitedBy.toLowerCase(),
+            recruit_discord_id: null,
+            recruit_rsn: invite.player.toLowerCase(),
+            source: 'broadcast',
+            discord_message_id: message.id,
+          });
+          if (error && error.code !== '23505') console.error(`[broadcast] recruitments insert failed: ${error.message}`);
+          console.log(`[broadcast] Invite: "${invite.player}" invited by "${invite.invitedBy}" in guild ${guildId}`);
         }
       }
     }

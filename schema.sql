@@ -447,6 +447,40 @@ ALTER TABLE raid_guides ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public read raid_guides" ON raid_guides FOR SELECT USING (true);
 
 -- =====================================================================
+-- Recruitment tracking (Discord welcome referrals + in-game invite broadcasts)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS recruitments (
+  id                 uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  guild_id           text NOT NULL,
+  recruiter_rsn      text NOT NULL,
+  recruit_discord_id text,
+  recruit_rsn        text NOT NULL DEFAULT '',
+  source             text NOT NULL DEFAULT 'discord' CHECK (source IN ('discord', 'broadcast')),
+  discord_message_id text,
+  recorded_at        timestamptz NOT NULL DEFAULT now()
+);
+
+-- The table already existed pre-migration with only guild_id/recruiter_rsn/recruit_discord_id/recruit_rsn;
+-- these add the new columns without touching existing rows.
+ALTER TABLE recruitments ADD COLUMN IF NOT EXISTS source             text NOT NULL DEFAULT 'discord';
+ALTER TABLE recruitments ADD COLUMN IF NOT EXISTS discord_message_id text;
+ALTER TABLE recruitments ADD COLUMN IF NOT EXISTS recorded_at        timestamptz NOT NULL DEFAULT now();
+DO $$ BEGIN
+  ALTER TABLE recruitments ADD CONSTRAINT recruitments_source_check CHECK (source IN ('discord', 'broadcast'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS recruitments_broadcast_dedup
+  ON recruitments (guild_id, discord_message_id)
+  WHERE discord_message_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS recruitments_guild_rsn ON recruitments (guild_id, recruit_rsn);
+
+ALTER TABLE recruitments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read recruitments" ON recruitments FOR SELECT USING (true);
+
+-- =====================================================================
 -- Competition start announcements (public "X of the Week has begun!" post)
 -- Dedup guard so a restart near a competition's startsAt doesn't double-post.
 -- =====================================================================

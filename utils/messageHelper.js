@@ -1,3 +1,5 @@
+const { extractBroadcast } = require('./broadcastExtractor');
+
 function isLootEmbed(embed) {
   const text = `${embed.title ?? ''} ${embed.description ?? ''}`;
   return /loot|looted|received a drop|drop:/i.test(text);
@@ -71,4 +73,11 @@ function parseBroadcastAchievementEmbed(embed) {
   return { player: m[1], title, description: desc };
 }
 
-module.exports = { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed, fetchAllMessages };
+function parseBroadcastInviteEmbed(embed) {
+  const desc = (embed.description ?? '').replace(/\*\*/g, '');
+  const result = extractBroadcast(desc);
+  if (!result || result.type !== 'Invite') return null;
+  return { player: result.player, invitedBy: result.invitedBy };
+}
+
+module.exports = { isLootEmbed, dateToSnowflake, parseBroadcastDropEmbed, parseBroadcastAchievementEmbed, parseBroadcastInviteEmbed, fetchAllMessages };
